@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Local LLM Web Translator</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo-area">
+        <img src="icons/icon48.png" alt="Logo" class="logo-img">
+        <h1 class="title">Local LLM Translator</h1>
+      </div>
+      <button id="settings-toggle" class="icon-btn" title="Settings">⚙️</button>
+    </header>
+
+    <!-- Main Panel -->
+    <main class="main-content">
+      <!-- Connection Status Card -->
+      <section class="card status-card">
+        <div class="status-row">
+          <span class="status-label">Status:</span>
+          <div class="status-value">
+            <span id="connection-indicator" class="dot disconnected"></span>
+            <span id="connection-text">Checking connection...</span>
+          </div>
+        </div>
+        <div id="model-row" class="status-row hidden">
+          <span class="status-label">LLM Model:</span>
+          <span id="model-name-display" class="model-badge">default</span>
+        </div>
+      </section>
+
+      <!-- Translation Controls -->
+      <section class="card control-card">
+        <!-- Translate Current Page Trigger -->
+        <div class="action-row">
+          <button id="translate-page-btn" class="primary-btn">Translate Page</button>
+          <div class="toggle-row">
+            <label class="switch">
+              <input type="checkbox" id="translation-active-toggle" disabled>
+              <span class="slider round"></span>
+            </label>
+            <span class="toggle-label">Show Translation</span>
+          </div>
+        </div>
+
+        <hr class="divider">
+
+        <!-- Model ID Selection -->
+        <div class="control-group">
+          <label for="model-select" class="control-label">Model Name</label>
+          <div class="select-wrapper">
+            <select id="model-select">
+              <option value="current">Current Loaded Model</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Target Language Dropdown -->
+        <div class="control-group">
+          <label for="target-lang" class="control-label">Target Language</label>
+          <div class="select-wrapper">
+            <select id="target-lang">
+              <option value="zh">Chinese (Simplified)</option>
+              <option value="zh-tw">Chinese (Traditional)</option>
+              <option value="en">English</option>
+              <option value="ja">Japanese</option>
+              <option value="ko">Korean</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="es">Spanish</option>
+              <option value="ru">Russian</option>
+              <option value="it">Italian</option>
+              <option value="pt">Portuguese</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Display Mode Dropdown -->
+        <div class="control-group">
+          <label for="display-mode" class="control-label">Display Mode</label>
+          <div class="select-wrapper">
+            <select id="display-mode">
+              <option value="dual">Dual Language</option>
+              <option value="translation">Translation Only</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <!-- Progress Tracking Card -->
+      <section id="progress-card" class="card progress-card hidden">
+        <div class="progress-info">
+          <span id="progress-status-text">Translating page content...</span>
+          <span id="progress-count">0/0</span>
+        </div>
+        <div class="progress-bar-container">
+          <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Advanced Settings Drawer -->
+    <section id="settings-drawer" class="settings-drawer hidden">
+      <div class="drawer-header">
+        <h2>Advanced Settings</h2>
+      </div>
+      <div class="drawer-content">
+        <!-- Provider Selection -->
+        <div class="control-group">
+          <label for="provider-select" class="control-label">API Provider</label>
+          <div class="select-wrapper">
+            <select id="provider-select">
+              <option value="lmstudio">LM Studio</option>
+              <option value="ollama">Ollama</option>
+              <option value="custom">Custom (OpenAI-Compatible)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- API URL -->
+        <div class="control-group">
+          <label for="api-url" class="control-label">API Server URL</label>
+          <input type="text" id="api-url" placeholder="http://localhost:1234/v1">
+        </div>
+
+        <!-- API Key -->
+        <div class="control-group">
+          <label for="api-key" class="control-label">API Key (Optional)</label>
+          <input type="password" id="api-key" placeholder="Enter API Key">
+        </div>
+
+        <!-- Concurrency & Batching Row -->
+        <div class="settings-row">
+          <div class="control-group half-width">
+            <label for="batch-size" class="control-label">Batch Size</label>
+            <input type="number" id="batch-size" min="1" max="50" value="10">
+          </div>
+          <div class="control-group half-width">
+            <label for="concurrency" class="control-label">Concurrency</label>
+            <input type="number" id="concurrency" min="1" max="10" value="3">
+          </div>
+        </div>
+
+        <button id="save-settings-btn" class="primary-btn secondary-color">Save & Connect</button>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span>Powered by local LLM • v1.0.0</span>
+    </footer>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
