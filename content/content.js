@@ -595,13 +595,18 @@ function setupDrag(el) {
 
 // --- Selection Translation Logic ---
 let selectionTranslateEnabled = true;
+// Track current selection state for scroll repositioning
+let _lmtActiveText = null;
+let _lmtScrollHideTimer = null;
 
 async function initSelectionTranslate() {
   const settings = await chrome.storage.local.get('selectionTranslateEnabled');
   selectionTranslateEnabled = settings.selectionTranslateEnabled !== false;
 
-  document.addEventListener('mouseup', handleMouseUpSelection);
-  document.addEventListener('mousedown', handleMouseDownSelection);
+  // Use capture phase (3rd arg = true) so we see the event even if the page
+  // calls stopPropagation (e.g. GitHub, X/Twitter)
+  document.addEventListener('mouseup', handleMouseUpSelection, true);
+  document.addEventListener('mousedown', handleMouseDownSelection, true);
 }
 
 function handleMouseUpSelection(e) {
@@ -625,41 +630,56 @@ function handleMouseUpSelection(e) {
       return;
     }
 
-    // Check if the click target is inside our selection container to avoid loop-closing the menu
-    const container = document.getElementById('lmt-selection-container');
-    if (container && (path.includes(container) || container.contains(target))) {
-      return;
-    }
+    // Check if the click target is inside our trigger/bubble to avoid re-triggering
+    const trigger = document.getElementById('lmt-trigger');
+    const bubble = document.getElementById('lmt-bubble');
+    if (trigger && (path.includes(trigger) || trigger.contains(target))) return;
+    if (bubble && (path.includes(bubble) || bubble.contains(target))) return;
 
     if (selection.rangeCount === 0) return;
     const range = selection.getRangeAt(0);
     const rect = range.getBoundingClientRect();
 
-    if (rect.width === 0 || rect.height === 0) return;
+    // rect is in viewport coords; width/height === 0 means collapsed selection
+    if (rect.width === 0 && rect.height === 0) return;
 
     showTriggerButton(text, rect);
   }, 10);
 }
 
 function handleMouseDownSelection(e) {
-  const container = document.getElementById('lmt-selection-container');
-  if (container) {
-    if (!e.composedPath().includes(container)) {
-      const trigger = document.getElementById('lmt-trigger');
-      if (trigger) trigger.style.display = 'none';
-      const bubble = document.getElementById('lmt-bubble');
-      if (bubble) bubble.style.display = 'none';
-    }
+  const trigger = document.getElementById('lmt-trigger');
+  const bubble = document.getElementById('lmt-bubble');
+  const path = e.composedPath ? e.composedPath() : [];
+
+  const clickedInsideTrigger = trigger && (path.includes(trigger) || trigger.contains(e.target));
+  const clickedInsideBubble = bubble && (path.includes(bubble) || bubble.contains(e.target));
+
+  if (!clickedInsideTrigger && trigger) {
+    trigger.style.display = 'none';
+  }
+  if (!clickedInsideBubble && bubble) {
+    bubble.style.display = 'none';
+  }
+  if (!clickedInsideTrigger && !clickedInsideBubble) {
+    _lmtActiveText = null;
   }
 }
 
-function showTriggerButton(text, rect) {
+function _ensureSelectionContainer() {
   let container = document.getElementById('lmt-selection-container');
   if (!container) {
     container = document.createElement('div');
     container.id = 'lmt-selection-container';
-    document.body.appendChild(container);
+    // Append to <html> instead of <body> to avoid body-level CSS transforms
+    // that can break fixed positioning on some sites
+    (document.documentElement || document.body).appendChild(container);
   }
+  return container;
+}
+
+function showTriggerButton(text, rect) {
+  const container = _ensureSelectionContainer();
 
   let trigger = document.getElementById('lmt-trigger');
   if (!trigger) {
@@ -682,16 +702,18 @@ function showTriggerButton(text, rect) {
     showBubble(text, rect);
   };
 
-  const triggerX = rect.right + window.scrollX - 5;
-  const triggerY = rect.bottom + window.scrollY + 5;
+  // rect is already in viewport coords — use them directly with position:fixed
+  const triggerX = Math.min(rect.right - 5, window.innerWidth - 40);
+  const triggerY = Math.min(rect.bottom + 5, window.innerHeight - 40);
   trigger.style.left = `${triggerX}px`;
   trigger.style.top = `${triggerY}px`;
   trigger.style.display = 'flex';
+
+  _lmtActiveText = text;
 }
 
 function showBubble(text, rect) {
-  const container = document.getElementById('lmt-selection-container');
-  if (!container) return;
+  const container = _ensureSelectionContainer();
 
   let bubble = document.getElementById('lmt-bubble');
   if (!bubble) {
@@ -731,16 +753,24 @@ function showBubble(text, rect) {
     e.preventDefault();
     e.stopPropagation();
     bubble.style.display = 'none';
+    _lmtActiveText = null;
   };
 
+  // Position the bubble in viewport coords (position:fixed)
   const bubbleWidth = 300;
-  let bubbleX = rect.left + window.scrollX + (rect.width - bubbleWidth) / 2;
-  bubbleX = Math.max(10, Math.min(bubbleX, window.innerWidth - bubbleWidth - 20));
+  let bubbleX = rect.left + (rect.width - bubbleWidth) / 2;
+  bubbleX = Math.max(10, Math.min(bubbleX, window.innerWidth - bubbleWidth - 10));
 
-  let bubbleY = rect.bottom + window.scrollY + 10;
+  let bubbleY = rect.bottom + 10;
+  // If the bubble would overflow the bottom, show it above the selection
+  if (bubbleY + 200 > window.innerHeight) {
+    bubbleY = Math.max(10, rect.top - 210);
+  }
   bubble.style.left = `${bubbleX}px`;
   bubble.style.top = `${bubbleY}px`;
   bubble.style.display = 'flex';
+
+  _lmtActiveText = text;
 
   (async () => {
     try {
