@@ -597,42 +597,49 @@ function setupDrag(el) {
 let selectionTranslateEnabled = true;
 let _lmtLastMouseX = 0;
 let _lmtLastMouseY = 0;
-let _lmtMouseIsDown = false;
 
 async function initSelectionTranslate() {
   const settings = await chrome.storage.local.get('selectionTranslateEnabled');
   selectionTranslateEnabled = settings.selectionTranslateEnabled !== false;
 
-  // Track mouse position at all times — this is our reliable coordinate source
+  // Track mouse position at all times (capture phase to see all events)
   document.addEventListener('mousemove', (e) => {
     _lmtLastMouseX = e.clientX;
     _lmtLastMouseY = e.clientY;
   }, true);
 
+  // Hide trigger/bubble on mousedown outside them
   document.addEventListener('mousedown', (e) => {
-    _lmtMouseIsDown = true;
     _lmtHideTriggerAndBubbleIfOutside(e);
   }, true);
 
+  // PRIMARY: mouseup in capture phase — works on most sites
   document.addEventListener('mouseup', (e) => {
-    _lmtMouseIsDown = false;
+    if (!selectionTranslateEnabled) return;
     _lmtLastMouseX = e.clientX;
     _lmtLastMouseY = e.clientY;
+    // Small delay to let browser finalize the selection
+    setTimeout(() => _lmtProcessSelection(), 30);
   }, true);
 
-  // selectionchange fires on document directly — not affected by stopPropagation
-  // on individual elements. This is our primary detection mechanism.
-  let selectionChangeTimer = null;
-  document.addEventListener('selectionchange', () => {
+  // BACKUP: also listen on window in case document-level capture misses it
+  window.addEventListener('mouseup', (e) => {
     if (!selectionTranslateEnabled) return;
-    // Debounce: only process after selection stops changing
-    clearTimeout(selectionChangeTimer);
-    selectionChangeTimer = setTimeout(() => {
-      // Only process when mouse is up (selection finalized)
-      if (_lmtMouseIsDown) return;
-      _lmtProcessSelection();
-    }, 50);
-  });
+    _lmtLastMouseX = e.clientX;
+    _lmtLastMouseY = e.clientY;
+    setTimeout(() => _lmtProcessSelection(), 50);
+  }, true);
+
+  // BACKUP for keyboard selections (Ctrl+A, Shift+Arrow, etc.)
+  let _kbTimer = null;
+  document.addEventListener('keyup', (e) => {
+    if (!selectionTranslateEnabled) return;
+    // Only process after keys that might change selection
+    if (e.shiftKey || e.ctrlKey || e.metaKey || e.key === 'a') {
+      clearTimeout(_kbTimer);
+      _kbTimer = setTimeout(() => _lmtProcessSelection(), 100);
+    }
+  }, true);
 }
 
 function _lmtHideTriggerAndBubbleIfOutside(e) {
@@ -647,6 +654,9 @@ function _lmtHideTriggerAndBubbleIfOutside(e) {
   if (!inBubble && bubble) bubble.style.display = 'none';
 }
 
+let _lmtLastProcessedText = '';
+let _lmtLastProcessedTime = 0;
+
 function _lmtProcessSelection() {
   const selection = window.getSelection();
   if (!selection || selection.rangeCount === 0) return;
@@ -655,36 +665,25 @@ function _lmtProcessSelection() {
   if (!text || text.length < 2 || text.length > 2000) return;
   if (/^[\d\s\p{P}]+$/u.test(text)) return;
 
-  // Don't re-trigger if click is on our own UI
+  // Dedup: don't re-trigger the same text within 200ms (from document+window double fire)
+  const now = Date.now();
+  if (text === _lmtLastProcessedText && now - _lmtLastProcessedTime < 200) return;
+  _lmtLastProcessedText = text;
+  _lmtLastProcessedTime = now;
+
+  // Don't re-trigger if the trigger is already visible for this text
   const trigger = document.getElementById('lmt-trigger');
-  const bubble = document.getElementById('lmt-bubble');
-  const activeEl = document.activeElement;
-  if (trigger && trigger.contains(activeEl)) return;
-  if (bubble && bubble.contains(activeEl)) return;
+  if (trigger && trigger.style.display === 'flex' && trigger._lmtText === text) return;
 
-  // Try to get rect from the selection range
-  const range = selection.getRangeAt(0);
-  const rect = range.getBoundingClientRect();
+  // Always position trigger near the mouse cursor — this is the most reliable
+  // approach across all sites (X.com, GitHub, etc.)
+  const posX = Math.max(5, Math.min(_lmtLastMouseX + 10, window.innerWidth - 40));
+  const posY = Math.max(5, Math.min(_lmtLastMouseY + 10, window.innerHeight - 40));
 
-  // Use selection rect if valid, otherwise fall back to mouse position
-  let posX, posY;
-  if (rect && rect.width > 0 && rect.height > 0) {
-    posX = rect.right - 5;
-    posY = rect.bottom + 5;
-  } else {
-    // Fallback: use last known mouse position
-    posX = _lmtLastMouseX + 10;
-    posY = _lmtLastMouseY + 10;
-  }
-
-  // Clamp to viewport
-  posX = Math.max(5, Math.min(posX, window.innerWidth - 40));
-  posY = Math.max(5, Math.min(posY, window.innerHeight - 40));
-
-  _lmtShowTrigger(text, posX, posY, rect);
+  _lmtShowTrigger(text, posX, posY);
 }
 
-function _lmtShowTrigger(text, posX, posY, selectionRect) {
+function _lmtShowTrigger(text, posX, posY) {
   let trigger = document.getElementById('lmt-trigger');
   if (!trigger) {
     trigger = document.createElement('button');
@@ -703,12 +702,15 @@ function _lmtShowTrigger(text, posX, posY, selectionRect) {
     trigger.appendChild(img);
   }
 
+  // Store text for dedup check
+  trigger._lmtText = text;
+
   trigger.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
   trigger.onclick = (e) => {
     e.preventDefault();
     e.stopPropagation();
     trigger.style.display = 'none';
-    _lmtShowBubble(text, posX, posY, selectionRect);
+    _lmtShowBubble(text, posX, posY);
   };
 
   trigger.style.left = posX + 'px';
@@ -750,7 +752,7 @@ function _lmtApplyTriggerStyles(el) {
   });
 }
 
-function _lmtShowBubble(text, posX, posY, selectionRect) {
+function _lmtShowBubble(text, posX, posY) {
   let bubble = document.getElementById('lmt-bubble');
   if (!bubble) {
     bubble = document.createElement('div');
@@ -820,19 +822,13 @@ function _lmtShowBubble(text, posX, posY, selectionRect) {
     bubble.style.display = 'none';
   };
 
-  // Position bubble using viewport coords
+  // Position bubble near the trigger position
   const bubbleWidth = 300;
-  let bx, by;
-  if (selectionRect && selectionRect.width > 0) {
-    bx = selectionRect.left + (selectionRect.width - bubbleWidth) / 2;
-    by = selectionRect.bottom + 10;
-  } else {
-    bx = posX - bubbleWidth / 2;
-    by = posY + 15;
-  }
+  let bx = posX - bubbleWidth / 2;
+  let by = posY + 15;
   bx = Math.max(10, Math.min(bx, window.innerWidth - bubbleWidth - 10));
   if (by + 200 > window.innerHeight) {
-    by = Math.max(10, (selectionRect ? selectionRect.top : posY) - 210);
+    by = Math.max(10, posY - 220);
   }
   bubble.style.left = bx + 'px';
   bubble.style.top = by + 'px';
