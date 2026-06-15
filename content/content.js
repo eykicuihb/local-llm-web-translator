@@ -610,6 +610,10 @@ async function initSelectionTranslate() {
 function handleMouseUpSelection(e) {
   if (!selectionTranslateEnabled) return;
 
+  // Capture event path and target synchronously before setTimeout
+  const target = e.target;
+  const path = e.composedPath ? e.composedPath() : [];
+
   // Let the selection finalize in browser layout
   setTimeout(() => {
     const selection = window.getSelection();
@@ -626,7 +630,7 @@ function handleMouseUpSelection(e) {
 
     // Check if the click target is inside our selection container to avoid loop-closing the menu
     const container = document.getElementById('lmt-selection-container');
-    if (container && e.composedPath().includes(container)) {
+    if (container && (path.includes(container) || container.contains(target))) {
       return;
     }
 
