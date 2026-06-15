@@ -2,7 +2,7 @@
 
 const BLOCK_TAGS = new Set([
   'P', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE',
-  'TD', 'TH', 'DIV', 'SECTION', 'ARTICLE'
+  'TD', 'TH', 'DIV', 'SECTION', 'ARTICLE', 'PRE'
 ]);
 
 let isTranslationActive = false;
@@ -28,6 +28,31 @@ function hasBlockChildren(element) {
   return false;
 }
 
+// Check if a node represents or contains programming code
+function isCodeBlock(node) {
+  if (node.tagName.toUpperCase() === 'CODE' || node.closest('code')) {
+    return true;
+  }
+  if (node.querySelector('code')) {
+    return true;
+  }
+  const className = node.className;
+  if (typeof className === 'string') {
+    const classes = className.toLowerCase();
+    if (
+      classes.includes('code') ||
+      classes.includes('syntax') ||
+      classes.includes('prettyprint') ||
+      classes.includes('highlight') ||
+      classes.includes('prism') ||
+      classes.includes('hljs')
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Determine if an element is a translation candidate
 function isTranslationCandidate(node) {
   if (node.nodeType !== Node.ELEMENT_NODE) return false;
@@ -36,9 +61,14 @@ function isTranslationCandidate(node) {
 
   // Skip script, style, and interactive tags
   if ([
-    'SCRIPT', 'STYLE', 'NOSCRIPT', 'IFRAME', 'CANVAS', 'SVG', 'PRE', 'CODE',
+    'SCRIPT', 'STYLE', 'NOSCRIPT', 'IFRAME', 'CANVAS', 'SVG', 'CODE',
     'INPUT', 'TEXTAREA', 'SELECT', 'OPTION', 'HEAD', 'NAV', 'FOOTER', 'NOSCRIPT'
   ].includes(tagName)) {
+    return false;
+  }
+
+  // If PRE, only skip if it's a code block
+  if (tagName === 'PRE' && isCodeBlock(node)) {
     return false;
   }
 
@@ -85,9 +115,13 @@ function walk(node, callback) {
   if (node.nodeType === Node.ELEMENT_NODE) {
     const tagName = node.tagName.toUpperCase();
     if (node.id === 'lmt-floating-widget' || [
-      'SCRIPT', 'STYLE', 'NOSCRIPT', 'IFRAME', 'CANVAS', 'SVG', 'PRE', 'CODE',
+      'SCRIPT', 'STYLE', 'NOSCRIPT', 'IFRAME', 'CANVAS', 'SVG', 'CODE',
       'INPUT', 'TEXTAREA', 'SELECT', 'OPTION', 'HEAD'
     ].includes(tagName)) {
+      return;
+    }
+
+    if (tagName === 'PRE' && isCodeBlock(node)) {
       return;
     }
 
@@ -416,6 +450,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       total: totalCount
     });
   }
+
+  if (message.type === 'SET_SELECTION_TRANSLATE') {
+    const { enabled } = message.payload;
+    selectionTranslateEnabled = enabled;
+    if (!selectionTranslateEnabled) {
+      const container = document.getElementById('lmt-selection-container');
+      if (container) {
+        const trigger = container.shadowRoot.getElementById('lmt-trigger');
+        if (trigger) trigger.style.display = 'none';
+        const bubble = container.shadowRoot.getElementById('lmt-bubble');
+        if (bubble) bubble.style.display = 'none';
+      }
+    }
+    sendResponse({ success: true });
+  }
 });
 
 // Create and inject the floating widget button
@@ -547,17 +596,415 @@ function setupDrag(el) {
   });
 }
 
+// --- Selection Translation Logic ---
+let selectionTranslateEnabled = true;
+
+async function initSelectionTranslate() {
+  const settings = await chrome.storage.local.get('selectionTranslateEnabled');
+  selectionTranslateEnabled = settings.selectionTranslateEnabled !== false;
+
+  document.addEventListener('mouseup', handleMouseUpSelection);
+  document.addEventListener('mousedown', handleMouseDownSelection);
+}
+
+function handleMouseUpSelection(e) {
+  if (!selectionTranslateEnabled) return;
+
+  // Let the selection finalize in browser layout
+  setTimeout(() => {
+    const selection = window.getSelection();
+    if (!selection) return;
+    const text = selection.toString().trim();
+
+    if (!text || text.length < 2 || text.length > 2000) {
+      return;
+    }
+
+    if (/^[\d\s\p{P}]+$/u.test(text)) {
+      return;
+    }
+
+    // Check if the click target is inside our selection container to avoid loop-closing the menu
+    const container = document.getElementById('lmt-selection-container');
+    if (container && e.composedPath().includes(container)) {
+      return;
+    }
+
+    if (selection.rangeCount === 0) return;
+    const range = selection.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+
+    if (rect.width === 0 || rect.height === 0) return;
+
+    showTriggerButton(text, rect);
+  }, 10);
+}
+
+function handleMouseDownSelection(e) {
+  const container = document.getElementById('lmt-selection-container');
+  if (container) {
+    if (!e.composedPath().includes(container)) {
+      const trigger = container.shadowRoot.getElementById('lmt-trigger');
+      if (trigger) trigger.style.display = 'none';
+      const bubble = container.shadowRoot.getElementById('lmt-bubble');
+      if (bubble) bubble.style.display = 'none';
+    }
+  }
+}
+
+function showTriggerButton(text, rect) {
+  let container = document.getElementById('lmt-selection-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'lmt-selection-container';
+    container.style.position = 'absolute';
+    container.style.zIndex = '2147483647';
+    container.style.left = '0';
+    container.style.top = '0';
+    container.style.width = '0';
+    container.style.height = '0';
+    document.body.appendChild(container);
+
+    const shadow = container.attachShadow({ mode: 'open' });
+    
+    const style = document.createElement('style');
+    style.textContent = `
+      :host {
+        position: absolute;
+        z-index: 2147483647;
+        pointer-events: none;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      .lmt-trigger-btn {
+        pointer-events: auto;
+        position: absolute;
+        width: 28px;
+        height: 28px;
+        background: rgba(30, 30, 45, 0.9);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 50%;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.2s;
+        padding: 0;
+        margin: 0;
+      }
+      .lmt-trigger-btn:hover {
+        transform: scale(1.1);
+        background: #6366f1;
+        border-color: rgba(255, 255, 255, 0.3);
+      }
+      .lmt-trigger-btn img {
+        width: 16px;
+        height: 16px;
+        pointer-events: none;
+      }
+      .lmt-bubble-card {
+        pointer-events: auto;
+        position: absolute;
+        width: 300px;
+        background: rgba(15, 23, 42, 0.95);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+        color: #f8fafc;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        animation: lmt-bubble-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      @keyframes lmt-bubble-in {
+        from {
+          opacity: 0;
+          transform: translateY(8px) scale(0.95);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
+      }
+      .lmt-bubble-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 12px;
+        background: rgba(255, 255, 255, 0.03);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      .lmt-bubble-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: #94a3b8;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .lmt-bubble-title img {
+        width: 12px;
+        height: 12px;
+      }
+      .lmt-bubble-close {
+        background: none;
+        border: none;
+        color: #64748b;
+        cursor: pointer;
+        font-size: 16px;
+        line-height: 1;
+        padding: 2px 6px;
+        border-radius: 4px;
+        transition: color 0.2s, background-color 0.2s;
+      }
+      .lmt-bubble-close:hover {
+        color: #f8fafc;
+        background: rgba(255, 255, 255, 0.08);
+      }
+      .lmt-bubble-body {
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        max-height: 240px;
+        overflow-y: auto;
+      }
+      .lmt-bubble-body::-webkit-scrollbar {
+        width: 6px;
+      }
+      .lmt-bubble-body::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      .lmt-bubble-body::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.15);
+        border-radius: 3px;
+      }
+      .lmt-source-text {
+        font-size: 12px;
+        color: #94a3b8;
+        line-height: 1.4;
+        border-left: 2px solid rgba(255, 255, 255, 0.1);
+        padding-left: 6px;
+        font-style: italic;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .lmt-translation-text {
+        font-size: 13.5px;
+        line-height: 1.5;
+        color: #f1f5f9;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .lmt-bubble-loader {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: #6366f1;
+        font-size: 12.5px;
+        padding: 4px 0;
+      }
+      .lmt-spinner {
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(99, 102, 241, 0.2);
+        border-top-color: #6366f1;
+        border-radius: 50%;
+        animation: lmt-spin-loader 0.8s linear infinite;
+      }
+      @keyframes lmt-spin-loader {
+        to { transform: rotate(360deg); }
+      }
+      .lmt-bubble-footer {
+        padding: 6px 12px;
+        background: rgba(0, 0, 0, 0.15);
+        border-top: 1px solid rgba(255, 255, 255, 0.04);
+        display: flex;
+        justify-content: flex-end;
+      }
+      .lmt-footer-btn {
+        background: none;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 4px;
+        color: #94a3b8;
+        cursor: pointer;
+        font-size: 11px;
+        padding: 4px 8px;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .lmt-footer-btn:hover {
+        color: #f8fafc;
+        border-color: rgba(255, 255, 255, 0.25);
+        background: rgba(255, 255, 255, 0.05);
+      }
+      .lmt-footer-btn:active {
+        transform: scale(0.97);
+      }
+    `;
+    shadow.appendChild(style);
+  }
+
+  let trigger = container.shadowRoot.getElementById('lmt-trigger');
+  if (!trigger) {
+    trigger = document.createElement('button');
+    trigger.id = 'lmt-trigger';
+    trigger.className = 'lmt-trigger-btn';
+    trigger.innerHTML = `<img src="${chrome.runtime.getURL('icons/icon48.png')}" alt="Translate">`;
+    container.shadowRoot.appendChild(trigger);
+  }
+
+  trigger.onmousedown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  trigger.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    trigger.style.display = 'none';
+    showBubble(text, rect);
+  };
+
+  const triggerX = rect.right + window.scrollX - 5;
+  const triggerY = rect.bottom + window.scrollY + 5;
+  trigger.style.left = `${triggerX}px`;
+  trigger.style.top = `${triggerY}px`;
+  trigger.style.display = 'flex';
+}
+
+function showBubble(text, rect) {
+  const container = document.getElementById('lmt-selection-container');
+  if (!container) return;
+
+  let bubble = container.shadowRoot.getElementById('lmt-bubble');
+  if (!bubble) {
+    bubble = document.createElement('div');
+    bubble.id = 'lmt-bubble';
+    bubble.className = 'lmt-bubble-card';
+    container.shadowRoot.appendChild(bubble);
+  }
+
+  const dispText = text.length > 150 ? text.substring(0, 150) + '...' : text;
+
+  bubble.innerHTML = `
+    <div class="lmt-bubble-header">
+      <div class="lmt-bubble-title">
+        <img src="${chrome.runtime.getURL('icons/icon48.png')}" alt="">
+        <span>翻译结果</span>
+      </div>
+      <button class="lmt-bubble-close">×</button>
+    </div>
+    <div class="lmt-bubble-body">
+      <div class="lmt-source-text">${escapeHtml(dispText)}</div>
+      <div class="lmt-bubble-loader">
+        <div class="lmt-spinner"></div>
+        <span>正在翻译中...</span>
+      </div>
+      <div class="lmt-translation-text" style="display:none;"></div>
+    </div>
+    <div class="lmt-bubble-footer" style="display:none;">
+      <button class="lmt-footer-btn lmt-copy-btn">
+        <svg style="width:12px;height:12px;fill:currentColor" viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+        复制
+      </button>
+    </div>
+  `;
+
+  bubble.querySelector('.lmt-bubble-close').onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    bubble.style.display = 'none';
+  };
+
+  const bubbleWidth = 300;
+  let bubbleX = rect.left + window.scrollX + (rect.width - bubbleWidth) / 2;
+  bubbleX = Math.max(10, Math.min(bubbleX, window.innerWidth - bubbleWidth - 20));
+
+  let bubbleY = rect.bottom + window.scrollY + 10;
+  bubble.style.left = `${bubbleX}px`;
+  bubble.style.top = `${bubbleY}px`;
+  bubble.style.display = 'flex';
+
+  (async () => {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'TRANSLATE_BATCH',
+        payload: { texts: [text] }
+      });
+
+      if (response && response.success && response.translations && response.translations[0]) {
+        const transText = response.translations[0];
+        const loader = bubble.querySelector('.lmt-bubble-loader');
+        const transField = bubble.querySelector('.lmt-translation-text');
+        const footer = bubble.querySelector('.lmt-bubble-footer');
+
+        loader.style.display = 'none';
+        transField.textContent = transText;
+        transField.style.display = 'block';
+        footer.style.display = 'flex';
+
+        bubble.querySelector('.lmt-copy-btn').onclick = async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          try {
+            await navigator.clipboard.writeText(transText);
+            const btn = bubble.querySelector('.lmt-copy-btn');
+            btn.innerHTML = `
+              <svg style="width:12px;height:12px;fill:currentColor" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+              已复制
+            `;
+            setTimeout(() => {
+              btn.innerHTML = `
+                <svg style="width:12px;height:12px;fill:currentColor" viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                复制
+              `;
+            }, 2000);
+          } catch (err) {
+            console.error('Failed to copy text:', err);
+          }
+        };
+      } else {
+        throw new Error(response ? response.error : 'Unknown response');
+      }
+    } catch (err) {
+      const loader = bubble.querySelector('.lmt-bubble-loader');
+      if (loader) {
+        loader.innerHTML = `<span style="color:#ef4444">翻译失败: ${err.message}</span>`;
+      }
+    }
+  })();
+}
+
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 // Auto-initialize widget on load
 (async () => {
   const domain = window.location.hostname;
   const { ignoredDomains = [] } = await chrome.storage.local.get('ignoredDomains');
   
   if (!ignoredDomains.includes(domain)) {
-    // Wait for DOM to load fully before creating button
     if (document.readyState === 'complete' || document.readyState === 'interactive') {
       createFloatingButton();
+      initSelectionTranslate();
     } else {
-      window.addEventListener('DOMContentLoaded', createFloatingButton);
+      window.addEventListener('DOMContentLoaded', () => {
+        createFloatingButton();
+        initSelectionTranslate();
+      });
     }
   }
 })();

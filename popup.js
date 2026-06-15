@@ -4,6 +4,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // UI Elements - Main Control
   const translatePageBtn = document.getElementById('translate-page-btn');
   const showTranslationToggle = document.getElementById('translation-active-toggle');
+  const selectionTranslateToggle = document.getElementById('selection-translate-toggle');
   const targetLangSelect = document.getElementById('target-lang');
   const displayModeSelect = document.getElementById('display-mode');
 
@@ -62,7 +63,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 2. Load stored settings from storage
     const settings = await chrome.storage.local.get([
-      'provider', 'apiUrl', 'modelName', 'apiKey', 'targetLang', 'translationMode', 'concurrency', 'batchSize'
+      'provider', 'apiUrl', 'modelName', 'apiKey', 'targetLang', 'translationMode', 'concurrency', 'batchSize', 'selectionTranslateEnabled'
     ]);
 
     // Apply values to UI
@@ -73,6 +74,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     displayModeSelect.value = settings.translationMode || 'dual';
     batchSizeInput.value = settings.batchSize || 10;
     concurrencyInput.value = settings.concurrency || 3;
+    selectionTranslateToggle.checked = settings.selectionTranslateEnabled !== false;
 
     // 3. Check Connection & load models
     await checkLlmConnection(apiUrlInput.value, apiKeyInput.value, settings.modelName || 'current');
@@ -254,6 +256,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   targetLangSelect.addEventListener('change', async () => {
     const val = targetLangSelect.value;
     await chrome.storage.local.set({ targetLang: val });
+  });
+
+  // Selection Translation toggle change
+  selectionTranslateToggle.addEventListener('change', async () => {
+    const val = selectionTranslateToggle.checked;
+    await chrome.storage.local.set({ selectionTranslateEnabled: val });
+
+    if (activeTab) {
+      try {
+        await chrome.tabs.sendMessage(activeTab.id, {
+          type: 'SET_SELECTION_TRANSLATE',
+          payload: { enabled: val }
+        });
+      } catch (err) {
+        // Content script might not be loaded yet
+      }
+    }
   });
 
   // Display Mode dropdown change

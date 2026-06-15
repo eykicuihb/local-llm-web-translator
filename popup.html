@@ -39,12 +39,21 @@
         <!-- Translate Current Page Trigger -->
         <div class="action-row">
           <button id="translate-page-btn" class="primary-btn">Translate Page</button>
-          <div class="toggle-row">
-            <label class="switch">
-              <input type="checkbox" id="translation-active-toggle" disabled>
-              <span class="slider round"></span>
-            </label>
-            <span class="toggle-label">Show Translation</span>
+          <div class="toggles-column" style="display: flex; flex-direction: column; gap: 8px; align-items: flex-start;">
+            <div class="toggle-row">
+              <label class="switch">
+                <input type="checkbox" id="translation-active-toggle" disabled>
+                <span class="slider round"></span>
+              </label>
+              <span class="toggle-label">Show Translation</span>
+            </div>
+            <div class="toggle-row">
+              <label class="switch">
+                <input type="checkbox" id="selection-translate-toggle">
+                <span class="slider round"></span>
+              </label>
+              <span class="toggle-label">Selection Trans</span>
+            </div>
           </div>
         </div>
 
