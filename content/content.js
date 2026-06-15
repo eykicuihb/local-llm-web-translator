@@ -455,13 +455,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const { enabled } = message.payload;
     selectionTranslateEnabled = enabled;
     if (!selectionTranslateEnabled) {
-      const container = document.getElementById('lmt-selection-container');
-      if (container) {
-        const trigger = container.shadowRoot.getElementById('lmt-trigger');
-        if (trigger) trigger.style.display = 'none';
-        const bubble = container.shadowRoot.getElementById('lmt-bubble');
-        if (bubble) bubble.style.display = 'none';
-      }
+      const trigger = document.getElementById('lmt-trigger');
+      if (trigger) trigger.style.display = 'none';
+      const bubble = document.getElementById('lmt-bubble');
+      if (bubble) bubble.style.display = 'none';
     }
     sendResponse({ success: true });
   }
