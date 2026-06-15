@@ -595,183 +595,249 @@ function setupDrag(el) {
 
 // --- Selection Translation Logic ---
 let selectionTranslateEnabled = true;
-// Track current selection state for scroll repositioning
-let _lmtActiveText = null;
-let _lmtScrollHideTimer = null;
+let _lmtLastMouseX = 0;
+let _lmtLastMouseY = 0;
+let _lmtMouseIsDown = false;
 
 async function initSelectionTranslate() {
   const settings = await chrome.storage.local.get('selectionTranslateEnabled');
   selectionTranslateEnabled = settings.selectionTranslateEnabled !== false;
 
-  // Use capture phase (3rd arg = true) so we see the event even if the page
-  // calls stopPropagation (e.g. GitHub, X/Twitter)
-  document.addEventListener('mouseup', handleMouseUpSelection, true);
-  document.addEventListener('mousedown', handleMouseDownSelection, true);
+  // Track mouse position at all times — this is our reliable coordinate source
+  document.addEventListener('mousemove', (e) => {
+    _lmtLastMouseX = e.clientX;
+    _lmtLastMouseY = e.clientY;
+  }, true);
+
+  document.addEventListener('mousedown', (e) => {
+    _lmtMouseIsDown = true;
+    _lmtHideTriggerAndBubbleIfOutside(e);
+  }, true);
+
+  document.addEventListener('mouseup', (e) => {
+    _lmtMouseIsDown = false;
+    _lmtLastMouseX = e.clientX;
+    _lmtLastMouseY = e.clientY;
+  }, true);
+
+  // selectionchange fires on document directly — not affected by stopPropagation
+  // on individual elements. This is our primary detection mechanism.
+  let selectionChangeTimer = null;
+  document.addEventListener('selectionchange', () => {
+    if (!selectionTranslateEnabled) return;
+    // Debounce: only process after selection stops changing
+    clearTimeout(selectionChangeTimer);
+    selectionChangeTimer = setTimeout(() => {
+      // Only process when mouse is up (selection finalized)
+      if (_lmtMouseIsDown) return;
+      _lmtProcessSelection();
+    }, 50);
+  });
 }
 
-function handleMouseUpSelection(e) {
-  if (!selectionTranslateEnabled) return;
-
-  // Capture event path and target synchronously before setTimeout
-  const target = e.target;
-  const path = e.composedPath ? e.composedPath() : [];
-
-  // Let the selection finalize in browser layout
-  setTimeout(() => {
-    const selection = window.getSelection();
-    if (!selection) return;
-    const text = selection.toString().trim();
-
-    if (!text || text.length < 2 || text.length > 2000) {
-      return;
-    }
-
-    if (/^[\d\s\p{P}]+$/u.test(text)) {
-      return;
-    }
-
-    // Check if the click target is inside our trigger/bubble to avoid re-triggering
-    const trigger = document.getElementById('lmt-trigger');
-    const bubble = document.getElementById('lmt-bubble');
-    if (trigger && (path.includes(trigger) || trigger.contains(target))) return;
-    if (bubble && (path.includes(bubble) || bubble.contains(target))) return;
-
-    if (selection.rangeCount === 0) return;
-    const range = selection.getRangeAt(0);
-    const rect = range.getBoundingClientRect();
-
-    // rect is in viewport coords; width/height === 0 means collapsed selection
-    if (rect.width === 0 && rect.height === 0) return;
-
-    showTriggerButton(text, rect);
-  }, 10);
-}
-
-function handleMouseDownSelection(e) {
+function _lmtHideTriggerAndBubbleIfOutside(e) {
   const trigger = document.getElementById('lmt-trigger');
   const bubble = document.getElementById('lmt-bubble');
   const path = e.composedPath ? e.composedPath() : [];
 
-  const clickedInsideTrigger = trigger && (path.includes(trigger) || trigger.contains(e.target));
-  const clickedInsideBubble = bubble && (path.includes(bubble) || bubble.contains(e.target));
+  const inTrigger = trigger && (path.includes(trigger) || trigger.contains(e.target));
+  const inBubble = bubble && (path.includes(bubble) || bubble.contains(e.target));
 
-  if (!clickedInsideTrigger && trigger) {
-    trigger.style.display = 'none';
-  }
-  if (!clickedInsideBubble && bubble) {
-    bubble.style.display = 'none';
-  }
-  if (!clickedInsideTrigger && !clickedInsideBubble) {
-    _lmtActiveText = null;
-  }
+  if (!inTrigger && trigger) trigger.style.display = 'none';
+  if (!inBubble && bubble) bubble.style.display = 'none';
 }
 
-function _ensureSelectionContainer() {
-  let container = document.getElementById('lmt-selection-container');
-  if (!container) {
-    container = document.createElement('div');
-    container.id = 'lmt-selection-container';
-    // Append to <html> instead of <body> to avoid body-level CSS transforms
-    // that can break fixed positioning on some sites
-    (document.documentElement || document.body).appendChild(container);
+function _lmtProcessSelection() {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return;
+  const text = selection.toString().trim();
+
+  if (!text || text.length < 2 || text.length > 2000) return;
+  if (/^[\d\s\p{P}]+$/u.test(text)) return;
+
+  // Don't re-trigger if click is on our own UI
+  const trigger = document.getElementById('lmt-trigger');
+  const bubble = document.getElementById('lmt-bubble');
+  const activeEl = document.activeElement;
+  if (trigger && trigger.contains(activeEl)) return;
+  if (bubble && bubble.contains(activeEl)) return;
+
+  // Try to get rect from the selection range
+  const range = selection.getRangeAt(0);
+  const rect = range.getBoundingClientRect();
+
+  // Use selection rect if valid, otherwise fall back to mouse position
+  let posX, posY;
+  if (rect && rect.width > 0 && rect.height > 0) {
+    posX = rect.right - 5;
+    posY = rect.bottom + 5;
+  } else {
+    // Fallback: use last known mouse position
+    posX = _lmtLastMouseX + 10;
+    posY = _lmtLastMouseY + 10;
   }
-  return container;
+
+  // Clamp to viewport
+  posX = Math.max(5, Math.min(posX, window.innerWidth - 40));
+  posY = Math.max(5, Math.min(posY, window.innerHeight - 40));
+
+  _lmtShowTrigger(text, posX, posY, rect);
 }
 
-function showTriggerButton(text, rect) {
-  const container = _ensureSelectionContainer();
-
+function _lmtShowTrigger(text, posX, posY, selectionRect) {
   let trigger = document.getElementById('lmt-trigger');
   if (!trigger) {
     trigger = document.createElement('button');
     trigger.id = 'lmt-trigger';
-    trigger.className = 'lmt-trigger-btn';
-    trigger.innerHTML = `<img src="${chrome.runtime.getURL('icons/icon48.png')}" alt="Translate">`;
-    container.appendChild(trigger);
+    // Apply all critical styles inline to avoid CSS conflicts
+    _lmtApplyTriggerStyles(trigger);
+    document.documentElement.appendChild(trigger);
+
+    const img = document.createElement('img');
+    img.src = chrome.runtime.getURL('icons/icon48.png');
+    img.alt = 'Translate';
+    Object.assign(img.style, {
+      width: '16px', height: '16px', pointerEvents: 'none',
+      display: 'block', margin: '0', padding: '0', border: 'none'
+    });
+    trigger.appendChild(img);
   }
 
-  trigger.onmousedown = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-  };
-
+  trigger.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
   trigger.onclick = (e) => {
     e.preventDefault();
     e.stopPropagation();
     trigger.style.display = 'none';
-    showBubble(text, rect);
+    _lmtShowBubble(text, posX, posY, selectionRect);
   };
 
-  // rect is already in viewport coords — use them directly with position:fixed
-  const triggerX = Math.min(rect.right - 5, window.innerWidth - 40);
-  const triggerY = Math.min(rect.bottom + 5, window.innerHeight - 40);
-  trigger.style.left = `${triggerX}px`;
-  trigger.style.top = `${triggerY}px`;
+  trigger.style.left = posX + 'px';
+  trigger.style.top = posY + 'px';
   trigger.style.display = 'flex';
-
-  _lmtActiveText = text;
 }
 
-function showBubble(text, rect) {
-  const container = _ensureSelectionContainer();
+function _lmtApplyTriggerStyles(el) {
+  Object.assign(el.style, {
+    all: 'initial',
+    position: 'fixed',
+    zIndex: '2147483647',
+    width: '28px',
+    height: '28px',
+    background: 'rgba(30, 30, 45, 0.9)',
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
+    border: '1px solid rgba(255, 255, 255, 0.15)',
+    borderRadius: '50%',
+    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.25)',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '0',
+    margin: '0',
+    pointerEvents: 'auto',
+    transition: 'transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.2s',
+    boxSizing: 'border-box'
+  });
 
+  el.addEventListener('mouseenter', () => {
+    el.style.transform = 'scale(1.1)';
+    el.style.background = '#6366f1';
+  });
+  el.addEventListener('mouseleave', () => {
+    el.style.transform = 'scale(1)';
+    el.style.background = 'rgba(30, 30, 45, 0.9)';
+  });
+}
+
+function _lmtShowBubble(text, posX, posY, selectionRect) {
   let bubble = document.getElementById('lmt-bubble');
   if (!bubble) {
     bubble = document.createElement('div');
     bubble.id = 'lmt-bubble';
-    bubble.className = 'lmt-bubble-card';
-    container.appendChild(bubble);
+    document.documentElement.appendChild(bubble);
   }
+
+  // Apply all styles inline
+  Object.assign(bubble.style, {
+    all: 'initial',
+    position: 'fixed',
+    zIndex: '2147483647',
+    width: '300px',
+    background: 'rgba(15, 23, 42, 0.95)',
+    backdropFilter: 'blur(16px)',
+    WebkitBackdropFilter: 'blur(16px)',
+    border: '1px solid rgba(255, 255, 255, 0.08)',
+    borderRadius: '12px',
+    boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.4)',
+    color: '#f8fafc',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+    fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    pointerEvents: 'auto',
+    boxSizing: 'border-box',
+    fontSize: '13px',
+    lineHeight: '1.5'
+  });
 
   const dispText = text.length > 150 ? text.substring(0, 150) + '...' : text;
 
   bubble.innerHTML = `
-    <div class="lmt-bubble-header">
-      <div class="lmt-bubble-title">
-        <img src="${chrome.runtime.getURL('icons/icon48.png')}" alt="">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:rgba(255,255,255,0.03);border-bottom:1px solid rgba(255,255,255,0.06);">
+      <div style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#94a3b8;">
+        <img src="${chrome.runtime.getURL('icons/icon48.png')}" style="width:12px;height:12px;display:block;" alt="">
         <span>翻译结果</span>
       </div>
-      <button class="lmt-bubble-close">×</button>
+      <button id="lmt-bubble-close-btn" style="all:initial;cursor:pointer;color:#64748b;font-size:18px;line-height:1;padding:2px 4px;border-radius:4px;display:flex;align-items:center;justify-content:center;pointer-events:auto;">×</button>
     </div>
-    <div class="lmt-bubble-body">
-      <div class="lmt-source-text">${escapeHtml(dispText)}</div>
-      <div class="lmt-bubble-loader">
-        <div class="lmt-spinner"></div>
+    <div style="padding:10px 12px;">
+      <div style="color:#94a3b8;font-size:12px;padding-bottom:8px;border-bottom:1px dashed rgba(255,255,255,0.06);margin-bottom:8px;word-break:break-word;">${escapeHtml(dispText)}</div>
+      <div id="lmt-bubble-loader" style="display:flex;align-items:center;gap:8px;color:#94a3b8;font-size:12px;">
+        <div style="width:14px;height:14px;border:2px solid rgba(255,255,255,0.1);border-top-color:#6366f1;border-radius:50%;animation:lmt-spin 0.8s linear infinite;flex-shrink:0;"></div>
         <span>正在翻译中...</span>
       </div>
-      <div class="lmt-translation-text" style="display:none;"></div>
+      <div id="lmt-bubble-trans" style="display:none;color:#f1f5f9;font-size:13px;line-height:1.6;word-break:break-word;"></div>
     </div>
-    <div class="lmt-bubble-footer" style="display:none;">
-      <button class="lmt-footer-btn lmt-copy-btn">
+    <div id="lmt-bubble-footer" style="display:none;padding:6px 12px;border-top:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);">
+      <button id="lmt-copy-btn" style="all:initial;cursor:pointer;display:flex;align-items:center;gap:4px;color:#94a3b8;font-size:11px;padding:4px 8px;border-radius:4px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.03);pointer-events:auto;font-family:inherit;">
         <svg style="width:12px;height:12px;fill:currentColor" viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
         复制
       </button>
     </div>
   `;
 
-  bubble.querySelector('.lmt-bubble-close').onclick = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
+  // Inject spin keyframe if not present
+  if (!document.getElementById('lmt-spin-style')) {
+    const style = document.createElement('style');
+    style.id = 'lmt-spin-style';
+    style.textContent = '@keyframes lmt-spin { to { transform: rotate(360deg); } }';
+    document.documentElement.appendChild(style);
+  }
+
+  bubble.querySelector('#lmt-bubble-close-btn').onclick = (e) => {
+    e.preventDefault(); e.stopPropagation();
     bubble.style.display = 'none';
-    _lmtActiveText = null;
   };
 
-  // Position the bubble in viewport coords (position:fixed)
+  // Position bubble using viewport coords
   const bubbleWidth = 300;
-  let bubbleX = rect.left + (rect.width - bubbleWidth) / 2;
-  bubbleX = Math.max(10, Math.min(bubbleX, window.innerWidth - bubbleWidth - 10));
-
-  let bubbleY = rect.bottom + 10;
-  // If the bubble would overflow the bottom, show it above the selection
-  if (bubbleY + 200 > window.innerHeight) {
-    bubbleY = Math.max(10, rect.top - 210);
+  let bx, by;
+  if (selectionRect && selectionRect.width > 0) {
+    bx = selectionRect.left + (selectionRect.width - bubbleWidth) / 2;
+    by = selectionRect.bottom + 10;
+  } else {
+    bx = posX - bubbleWidth / 2;
+    by = posY + 15;
   }
-  bubble.style.left = `${bubbleX}px`;
-  bubble.style.top = `${bubbleY}px`;
-  bubble.style.display = 'flex';
+  bx = Math.max(10, Math.min(bx, window.innerWidth - bubbleWidth - 10));
+  if (by + 200 > window.innerHeight) {
+    by = Math.max(10, (selectionRect ? selectionRect.top : posY) - 210);
+  }
+  bubble.style.left = bx + 'px';
+  bubble.style.top = by + 'px';
 
-  _lmtActiveText = text;
-
+  // Do translation
   (async () => {
     try {
       const response = await chrome.runtime.sendMessage({
@@ -781,40 +847,40 @@ function showBubble(text, rect) {
 
       if (response && response.success && response.translations && response.translations[0]) {
         const transText = response.translations[0];
-        const loader = bubble.querySelector('.lmt-bubble-loader');
-        const transField = bubble.querySelector('.lmt-translation-text');
-        const footer = bubble.querySelector('.lmt-bubble-footer');
+        const loader = bubble.querySelector('#lmt-bubble-loader');
+        const transField = bubble.querySelector('#lmt-bubble-trans');
+        const footer = bubble.querySelector('#lmt-bubble-footer');
 
-        loader.style.display = 'none';
-        transField.textContent = transText;
-        transField.style.display = 'block';
-        footer.style.display = 'flex';
+        if (loader) loader.style.display = 'none';
+        if (transField) { transField.textContent = transText; transField.style.display = 'block'; }
+        if (footer) footer.style.display = 'flex';
 
-        bubble.querySelector('.lmt-copy-btn').onclick = async (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          try {
-            await navigator.clipboard.writeText(transText);
-            const btn = bubble.querySelector('.lmt-copy-btn');
-            btn.innerHTML = `
-              <svg style="width:12px;height:12px;fill:currentColor" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
-              已复制
-            `;
-            setTimeout(() => {
-              btn.innerHTML = `
-                <svg style="width:12px;height:12px;fill:currentColor" viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-                复制
+        const copyBtn = bubble.querySelector('#lmt-copy-btn');
+        if (copyBtn) {
+          copyBtn.onclick = async (e) => {
+            e.preventDefault(); e.stopPropagation();
+            try {
+              await navigator.clipboard.writeText(transText);
+              copyBtn.innerHTML = `
+                <svg style="width:12px;height:12px;fill:currentColor" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                已复制
               `;
-            }, 2000);
-          } catch (err) {
-            console.error('Failed to copy text:', err);
-          }
-        };
+              setTimeout(() => {
+                copyBtn.innerHTML = `
+                  <svg style="width:12px;height:12px;fill:currentColor" viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                  复制
+                `;
+              }, 2000);
+            } catch (err) {
+              console.error('Failed to copy:', err);
+            }
+          };
+        }
       } else {
         throw new Error(response ? response.error : 'Unknown response');
       }
     } catch (err) {
-      const loader = bubble.querySelector('.lmt-bubble-loader');
+      const loader = bubble.querySelector('#lmt-bubble-loader');
       if (loader) {
         loader.innerHTML = `<span style="color:#ef4444">翻译失败: ${err.message}</span>`;
       }
