@@ -603,38 +603,42 @@ async function initSelectionTranslate() {
   selectionTranslateEnabled = settings.selectionTranslateEnabled !== false;
 
   // Track mouse position at all times (capture phase to see all events)
-  document.addEventListener('mousemove', (e) => {
+  const trackMouse = (e) => {
     _lmtLastMouseX = e.clientX;
     _lmtLastMouseY = e.clientY;
-  }, true);
+  };
+  document.addEventListener('mousemove', trackMouse, true);
+  document.addEventListener('pointermove', trackMouse, true);
 
-  // Hide trigger/bubble on mousedown outside them
-  document.addEventListener('mousedown', (e) => {
-    _lmtHideTriggerAndBubbleIfOutside(e);
-  }, true);
+  // Hide trigger/bubble on mousedown/pointerdown outside them
+  const onDown = (e) => { _lmtHideTriggerAndBubbleIfOutside(e); };
+  document.addEventListener('mousedown', onDown, true);
+  document.addEventListener('pointerdown', onDown, true);
 
-  // PRIMARY: mouseup in capture phase — works on most sites
-  document.addEventListener('mouseup', (e) => {
+  // Selection detection handler
+  let _selTimer = null;
+  const onUp = (e) => {
     if (!selectionTranslateEnabled) return;
     _lmtLastMouseX = e.clientX;
     _lmtLastMouseY = e.clientY;
-    // Small delay to let browser finalize the selection
-    setTimeout(() => _lmtProcessSelection(), 30);
-  }, true);
+    // Debounce: multiple events (mouseup+pointerup, document+window) may fire
+    clearTimeout(_selTimer);
+    _selTimer = setTimeout(() => _lmtProcessSelection(), 40);
+  };
 
-  // BACKUP: also listen on window in case document-level capture misses it
-  window.addEventListener('mouseup', (e) => {
-    if (!selectionTranslateEnabled) return;
-    _lmtLastMouseX = e.clientX;
-    _lmtLastMouseY = e.clientY;
-    setTimeout(() => _lmtProcessSelection(), 50);
-  }, true);
+  // Register on BOTH mouseup AND pointerup, on BOTH document AND window.
+  // - mouseup capture: works on most sites
+  // - pointerup capture: works when site calls stopImmediatePropagation on mouseup (GitHub)
+  // - window: fires before document in capture phase, backup in case document listeners are blocked
+  document.addEventListener('mouseup', onUp, true);
+  window.addEventListener('mouseup', onUp, true);
+  document.addEventListener('pointerup', onUp, true);
+  window.addEventListener('pointerup', onUp, true);
 
   // BACKUP for keyboard selections (Ctrl+A, Shift+Arrow, etc.)
   let _kbTimer = null;
   document.addEventListener('keyup', (e) => {
     if (!selectionTranslateEnabled) return;
-    // Only process after keys that might change selection
     if (e.shiftKey || e.ctrlKey || e.metaKey || e.key === 'a') {
       clearTimeout(_kbTimer);
       _kbTimer = setTimeout(() => _lmtProcessSelection(), 100);
