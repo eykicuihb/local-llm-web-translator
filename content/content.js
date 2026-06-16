@@ -632,6 +632,10 @@ async function initSelectionTranslate() {
     _lmtLastMouseX = e.clientX;
     _lmtLastMouseY = e.clientY;
     _mouseDown = false;
+    // Don't re-trigger selection if the user clicked on our own UI
+    const t = document.getElementById('lmt-trigger');
+    const b = document.getElementById('lmt-bubble');
+    if ((t && t.contains(e.target)) || (b && b.contains(e.target))) return;
     clearTimeout(_selTimer);
     _selTimer = setTimeout(() => _lmtProcessSelection(), 40);
   };
@@ -705,6 +709,10 @@ function _lmtProcessSelection() {
     // Don't re-trigger if the trigger is already visible for this text
     const trigger = document.getElementById('lmt-trigger');
     if (trigger && trigger.style.display === 'flex' && trigger._lmtText === text) return;
+
+    // Don't show trigger if the translation bubble is already visible
+    const bubble = document.getElementById('lmt-bubble');
+    if (bubble && bubble.style.display !== 'none' && bubble.style.display !== '') return;
 
     // Position trigger near the mouse cursor
     const posX = Math.max(5, Math.min(_lmtLastMouseX + 10, window.innerWidth - 40));
