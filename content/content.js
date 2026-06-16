@@ -610,40 +610,63 @@ async function initSelectionTranslate() {
   document.addEventListener('mousemove', trackMouse, true);
   document.addEventListener('pointermove', trackMouse, true);
 
-  // Hide trigger/bubble on mousedown/pointerdown outside them
-  const onDown = (e) => { _lmtHideTriggerAndBubbleIfOutside(e); };
-  document.addEventListener('mousedown', onDown, true);
-  document.addEventListener('pointerdown', onDown, true);
+  // Track mouse button state for polling
+  let _mouseDown = false;
+  document.addEventListener('mousedown', (e) => {
+    _mouseDown = true;
+    _lmtHideTriggerAndBubbleIfOutside(e);
+  }, true);
+  document.addEventListener('pointerdown', (e) => {
+    _mouseDown = true;
+    _lmtHideTriggerAndBubbleIfOutside(e);
+  }, true);
+  document.addEventListener('mouseup', () => { _mouseDown = false; }, true);
+  document.addEventListener('pointerup', () => { _mouseDown = false; }, true);
+  window.addEventListener('mouseup', () => { _mouseDown = false; }, true);
+  window.addEventListener('pointerup', () => { _mouseDown = false; }, true);
 
-  // Selection detection handler
+  // Event-based detection (works on most sites)
   let _selTimer = null;
   const onUp = (e) => {
     if (!selectionTranslateEnabled) return;
     _lmtLastMouseX = e.clientX;
     _lmtLastMouseY = e.clientY;
-    // Debounce: multiple events (mouseup+pointerup, document+window) may fire
+    _mouseDown = false;
     clearTimeout(_selTimer);
     _selTimer = setTimeout(() => _lmtProcessSelection(), 40);
   };
-
-  // Register on BOTH mouseup AND pointerup, on BOTH document AND window.
-  // - mouseup capture: works on most sites
-  // - pointerup capture: works when site calls stopImmediatePropagation on mouseup (GitHub)
-  // - window: fires before document in capture phase, backup in case document listeners are blocked
   document.addEventListener('mouseup', onUp, true);
   window.addEventListener('mouseup', onUp, true);
   document.addEventListener('pointerup', onUp, true);
   window.addEventListener('pointerup', onUp, true);
 
-  // BACKUP for keyboard selections (Ctrl+A, Shift+Arrow, etc.)
-  let _kbTimer = null;
+  // Keyboard selections
   document.addEventListener('keyup', (e) => {
     if (!selectionTranslateEnabled) return;
     if (e.shiftKey || e.ctrlKey || e.metaKey || e.key === 'a') {
-      clearTimeout(_kbTimer);
-      _kbTimer = setTimeout(() => _lmtProcessSelection(), 100);
+      clearTimeout(_selTimer);
+      _selTimer = setTimeout(() => _lmtProcessSelection(), 100);
     }
   }, true);
+
+  // NUCLEAR FALLBACK: poll window.getSelection() every 300ms.
+  // This catches GitHub and any site that blocks ALL mouse/pointer events.
+  let _pollLastText = '';
+  setInterval(() => {
+    if (!selectionTranslateEnabled) return;
+    if (_mouseDown) return; // Don't process while user is still dragging
+    try {
+      const sel = window.getSelection();
+      if (!sel) return;
+      const text = sel.toString().trim();
+      if (text && text.length >= 2 && text !== _pollLastText) {
+        _pollLastText = text;
+        _lmtProcessSelection();
+      } else if (!text || text.length < 2) {
+        _pollLastText = '';
+      }
+    } catch (e) { /* ignore */ }
+  }, 300);
 }
 
 function _lmtHideTriggerAndBubbleIfOutside(e) {
@@ -662,29 +685,32 @@ let _lmtLastProcessedText = '';
 let _lmtLastProcessedTime = 0;
 
 function _lmtProcessSelection() {
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0) return;
-  const text = selection.toString().trim();
+  try {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+    const text = selection.toString().trim();
 
-  if (!text || text.length < 2 || text.length > 2000) return;
-  if (/^[\d\s\p{P}]+$/u.test(text)) return;
+    if (!text || text.length < 2 || text.length > 2000) return;
+    if (/^[\d\s\p{P}]+$/u.test(text)) return;
 
-  // Dedup: don't re-trigger the same text within 200ms (from document+window double fire)
-  const now = Date.now();
-  if (text === _lmtLastProcessedText && now - _lmtLastProcessedTime < 200) return;
-  _lmtLastProcessedText = text;
-  _lmtLastProcessedTime = now;
+    // Dedup: don't re-trigger the same text within 500ms
+    const now = Date.now();
+    if (text === _lmtLastProcessedText && now - _lmtLastProcessedTime < 500) return;
+    _lmtLastProcessedText = text;
+    _lmtLastProcessedTime = now;
 
-  // Don't re-trigger if the trigger is already visible for this text
-  const trigger = document.getElementById('lmt-trigger');
-  if (trigger && trigger.style.display === 'flex' && trigger._lmtText === text) return;
+    // Don't re-trigger if the trigger is already visible for this text
+    const trigger = document.getElementById('lmt-trigger');
+    if (trigger && trigger.style.display === 'flex' && trigger._lmtText === text) return;
 
-  // Always position trigger near the mouse cursor — this is the most reliable
-  // approach across all sites (X.com, GitHub, etc.)
-  const posX = Math.max(5, Math.min(_lmtLastMouseX + 10, window.innerWidth - 40));
-  const posY = Math.max(5, Math.min(_lmtLastMouseY + 10, window.innerHeight - 40));
+    // Position trigger near the mouse cursor
+    const posX = Math.max(5, Math.min(_lmtLastMouseX + 10, window.innerWidth - 40));
+    const posY = Math.max(5, Math.min(_lmtLastMouseY + 10, window.innerHeight - 40));
 
-  _lmtShowTrigger(text, posX, posY);
+    _lmtShowTrigger(text, posX, posY);
+  } catch (err) {
+    // Silently ignore to prevent breaking the page
+  }
 }
 
 function _lmtShowTrigger(text, posX, posY) {
