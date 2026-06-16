@@ -650,11 +650,14 @@ async function initSelectionTranslate() {
   }, true);
 
   // NUCLEAR FALLBACK: poll window.getSelection() every 300ms.
-  // This catches GitHub and any site that blocks ALL mouse/pointer events.
+  // This catches GitHub and any site that blocks mouse/pointer events in the
+  // capture phase (stopImmediatePropagation). Deduplication is handled solely
+  // by _pollLastText below — we deliberately do NOT guard on _mouseDown, because
+  // if the site blocks mouseup (but not mousedown), _mouseDown gets stuck true
+  // forever and this poll would never run, re-breaking GitHub.
   let _pollLastText = '';
   setInterval(() => {
     if (!selectionTranslateEnabled) return;
-    if (_mouseDown) return; // Don't process while user is still dragging
     try {
       const sel = window.getSelection();
       if (!sel) return;
@@ -923,20 +926,24 @@ function escapeHtml(text) {
     .replace(/'/g, "&#039;");
 }
 
-// Auto-initialize widget on load
+// Auto-initialize on load.
+// Selection translate is ALWAYS enabled (the user didn't ask to disable it);
+// only the floating widget respects the per-domain ignore list. This prevents
+// the trap where clicking the widget's × (which adds the domain to
+// ignoredDomains) silently also kills selection translation on that site.
 (async () => {
   const domain = window.location.hostname;
   const { ignoredDomains = [] } = await chrome.storage.local.get('ignoredDomains');
-  
-  if (!ignoredDomains.includes(domain)) {
-    if (document.readyState === 'complete' || document.readyState === 'interactive') {
-      createFloatingButton();
-      initSelectionTranslate();
-    } else {
-      window.addEventListener('DOMContentLoaded', () => {
-        createFloatingButton();
-        initSelectionTranslate();
-      });
-    }
+  const showWidget = !ignoredDomains.includes(domain);
+
+  const start = () => {
+    if (showWidget) createFloatingButton();
+    initSelectionTranslate();
+  };
+
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    start();
+  } else {
+    window.addEventListener('DOMContentLoaded', start);
   }
 })();
