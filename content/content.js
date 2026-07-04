@@ -288,6 +288,66 @@ function sendProgressUpdate() {
   });
 }
 
+// Resume translation by re-observing visible untranslated elements
+function resumeTranslation() {
+  if (!isTranslationActive) return;
+  
+  const candidates = [];
+  walk(document.body, (el) => {
+    const status = el.getAttribute('data-lmt-translated');
+    if (!status || status === 'false') {
+      candidates.push(el);
+    }
+  });
+
+  if (candidates.length > 0) {
+    initIntersectionObserver();
+    candidates.forEach(el => {
+      intersectionObserver.observe(el);
+    });
+  }
+}
+
+// Stop translation entirely, clean up the DOM, and disconnect observers
+function stopTranslation() {
+  isTranslationActive = false;
+  
+  if (observer) {
+    observer.disconnect();
+    observer = null;
+  }
+
+  if (intersectionObserver) {
+    intersectionObserver.disconnect();
+    intersectionObserver = null;
+  }
+
+  lazyTranslateQueue = [];
+  if (lazyTranslateTimeout) {
+    clearTimeout(lazyTranslateTimeout);
+    lazyTranslateTimeout = null;
+  }
+
+  document.body.classList.remove('lmt-hide-translations');
+  document.body.classList.remove('lmt-translation-only-mode');
+
+  // Remove translation elements from DOM
+  const translations = document.querySelectorAll('.lmt-translation');
+  translations.forEach(el => el.remove());
+
+  // Clean original element classes and data attributes
+  const originals = document.querySelectorAll('.lmt-original-translated');
+  originals.forEach(el => el.classList.remove('lmt-original-translated'));
+
+  const translatedElements = document.querySelectorAll('[data-lmt-translated]');
+  translatedElements.forEach(el => el.removeAttribute('data-lmt-translated'));
+
+  translatedCount = 0;
+  totalCount = 0;
+
+  updateWidgetState();
+}
+
 // Set up MutationObserver
 function setupMutationObserver() {
   if (observer) return;
@@ -316,6 +376,7 @@ function setupMutationObserver() {
 // Handle dynamic mutations by registering new candidates to the IntersectionObserver
 function handleMutations(addedNodes) {
   if (!isTranslationActive) return;
+  if (document.body.classList.contains('lmt-hide-translations')) return;
 
   const addedCandidates = [];
   addedNodes.forEach(node => {
@@ -341,6 +402,7 @@ function initIntersectionObserver() {
   if (intersectionObserver) return;
 
   intersectionObserver = new IntersectionObserver((entries) => {
+    if (document.body.classList.contains('lmt-hide-translations')) return;
     const elementsToTranslate = [];
     for (const entry of entries) {
       if (entry.isIntersecting) {
@@ -365,6 +427,7 @@ function initIntersectionObserver() {
 
 // Queue and debounce lazy translation requests
 function handleLazyTranslation(elements) {
+  if (document.body.classList.contains('lmt-hide-translations')) return;
   elements.forEach(el => {
     if (!lazyTranslateQueue.includes(el)) {
       lazyTranslateQueue.push(el);
@@ -430,8 +493,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const { visible } = message.payload;
     if (visible) {
       document.body.classList.remove('lmt-hide-translations');
+      if (isTranslationActive) {
+        resumeTranslation();
+      }
     } else {
       document.body.classList.add('lmt-hide-translations');
+      lazyTranslateQueue = [];
+      if (lazyTranslateTimeout) {
+        clearTimeout(lazyTranslateTimeout);
+        lazyTranslateTimeout = null;
+      }
     }
     updateWidgetState();
     sendResponse({ success: true });
@@ -487,6 +558,9 @@ function createFloatingButton() {
       e.stopPropagation();
       widget.classList.add('lmt-hidden-widget');
       
+      // Stop/reset active translation if any
+      stopTranslation();
+
       const domain = window.location.hostname;
       const { ignoredDomains = [] } = await chrome.storage.local.get('ignoredDomains');
       if (!ignoredDomains.includes(domain)) {
@@ -503,8 +577,14 @@ function createFloatingButton() {
       const isHidden = document.body.classList.contains('lmt-hide-translations');
       if (isHidden) {
         document.body.classList.remove('lmt-hide-translations');
+        resumeTranslation();
       } else {
         document.body.classList.add('lmt-hide-translations');
+        lazyTranslateQueue = [];
+        if (lazyTranslateTimeout) {
+          clearTimeout(lazyTranslateTimeout);
+          lazyTranslateTimeout = null;
+        }
       }
       updateWidgetState();
     }
