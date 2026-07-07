@@ -30,10 +30,11 @@ function hasBlockChildren(element) {
 
 // Check if a node represents or contains programming code
 function isCodeBlock(node) {
-  if (node.tagName.toUpperCase() === 'CODE' || node.closest('code')) {
+  const tagName = node.tagName.toUpperCase();
+  if (tagName === 'CODE' || node.closest('code')) {
     return true;
   }
-  if (node.querySelector('code')) {
+  if (tagName === 'PRE' || node.closest('pre')) {
     return true;
   }
   const className = node.className;
@@ -57,18 +58,17 @@ function isCodeBlock(node) {
 function isTranslationCandidate(node) {
   if (node.nodeType !== Node.ELEMENT_NODE) return false;
 
+  if (isCodeBlock(node)) {
+    return false;
+  }
+
   const tagName = node.tagName.toUpperCase();
 
   // Skip script, style, and interactive tags
   if ([
-    'SCRIPT', 'STYLE', 'NOSCRIPT', 'IFRAME', 'CANVAS', 'SVG', 'CODE',
+    'SCRIPT', 'STYLE', 'NOSCRIPT', 'IFRAME', 'CANVAS', 'SVG',
     'INPUT', 'TEXTAREA', 'SELECT', 'OPTION', 'HEAD', 'NAV', 'FOOTER', 'NOSCRIPT'
   ].includes(tagName)) {
-    return false;
-  }
-
-  // If PRE, only skip if it's a code block
-  if (tagName === 'PRE' && isCodeBlock(node)) {
     return false;
   }
 
@@ -121,7 +121,7 @@ function walk(node, callback) {
       return;
     }
 
-    if (tagName === 'PRE' && isCodeBlock(node)) {
+    if (isCodeBlock(node)) {
       return;
     }
 
@@ -230,7 +230,8 @@ async function translateBatchElements(elements) {
         requestAnimationFrame(() => {
           for (let i = 0; i < elements.length; i++) {
             const el = elements[i];
-            const translationText = translations[i] || '';
+            const rawTranslation = translations[i];
+            const translationText = rawTranslation !== undefined && rawTranslation !== null ? String(rawTranslation) : '';
 
             if (translationText && translationText.trim().length > 0) {
               injectTranslation(el, translationText);
