@@ -1032,7 +1032,11 @@ function makeElementDraggable(element, handle) {
     initialLeft = rect.left;
     initialTop = rect.top;
 
-    handle.setPointerCapture(e.pointerId);
+    try {
+      handle.setPointerCapture(e.pointerId);
+    } catch (err) {
+      console.warn("setPointerCapture failed:", err);
+    }
     e.preventDefault();
   });
 
@@ -1062,7 +1066,11 @@ function makeElementDraggable(element, handle) {
   const stopDrag = (e) => {
     if (!isDragging) return;
     isDragging = false;
-    handle.releasePointerCapture(e.pointerId);
+    try {
+      handle.releasePointerCapture(e.pointerId);
+    } catch (err) {
+      // ignore
+    }
   };
 
   handle.addEventListener('pointerup', stopDrag);
