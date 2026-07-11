@@ -908,8 +908,8 @@ function _lmtShowBubble(text, posX, posY) {
   const dispText = text.length > 150 ? text.substring(0, 150) + '...' : text;
 
   bubble.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:rgba(255,255,255,0.03);border-bottom:1px solid rgba(255,255,255,0.06);">
-      <div style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#94a3b8;">
+    <div id="lmt-bubble-header" style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:rgba(255,255,255,0.03);border-bottom:1px solid rgba(255,255,255,0.06);cursor:move;user-select:none;pointer-events:auto;">
+      <div style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#94a3b8;pointer-events:none;">
         <img src="${chrome.runtime.getURL('icons/icon48.png')}" style="width:12px;height:12px;display:block;" alt="">
         <span>翻译结果</span>
       </div>
@@ -939,10 +939,15 @@ function _lmtShowBubble(text, posX, posY) {
     document.documentElement.appendChild(style);
   }
 
+  // Set up close button
   bubble.querySelector('#lmt-bubble-close-btn').onclick = (e) => {
     e.preventDefault(); e.stopPropagation();
     bubble.style.display = 'none';
   };
+
+  // Set up dragging
+  const header = bubble.querySelector('#lmt-bubble-header');
+  makeElementDraggable(bubble, header);
 
   // Position bubble near the trigger position
   const bubbleWidth = 300;
@@ -1004,6 +1009,64 @@ function _lmtShowBubble(text, posX, posY) {
       }
     }
   })();
+}
+
+function makeElementDraggable(element, handle) {
+  let isDragging = false;
+  let startX = 0;
+  let startY = 0;
+  let initialLeft = 0;
+  let initialTop = 0;
+
+  handle.addEventListener('pointerdown', (e) => {
+    // Only drag with left click / primary pointer touch
+    if (e.button !== 0) return;
+    // Don't drag if clicking the close button
+    if (e.target.closest('#lmt-bubble-close-btn')) return;
+
+    isDragging = true;
+    startX = e.clientX;
+    startY = e.clientY;
+
+    const rect = element.getBoundingClientRect();
+    initialLeft = rect.left;
+    initialTop = rect.top;
+
+    handle.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+
+  handle.addEventListener('pointermove', (e) => {
+    if (!isDragging) return;
+
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+
+    let newLeft = initialLeft + dx;
+    let newTop = initialTop + dy;
+
+    // Bounds check to keep bubble within the screen viewport
+    const rect = element.getBoundingClientRect();
+    const minX = 10;
+    const maxX = window.innerWidth - rect.width - 10;
+    const minY = 10;
+    const maxY = window.innerHeight - rect.height - 10;
+
+    newLeft = Math.max(minX, Math.min(newLeft, maxX));
+    newTop = Math.max(minY, Math.min(newTop, maxY));
+
+    element.style.left = newLeft + 'px';
+    element.style.top = newTop + 'px';
+  });
+
+  const stopDrag = (e) => {
+    if (!isDragging) return;
+    isDragging = false;
+    handle.releasePointerCapture(e.pointerId);
+  };
+
+  handle.addEventListener('pointerup', stopDrag);
+  handle.addEventListener('pointercancel', stopDrag);
 }
 
 function escapeHtml(text) {
