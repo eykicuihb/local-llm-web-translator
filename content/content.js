@@ -1097,7 +1097,10 @@ function escapeHtml(text) {
   const showWidget = !ignoredDomains.includes(domain);
 
   const start = () => {
-    if (showWidget) createFloatingButton();
+    // Only show full-page translation widget in the top-level window
+    if (showWidget && window === window.top) {
+      createFloatingButton();
+    }
     initSelectionTranslate();
   };
 
