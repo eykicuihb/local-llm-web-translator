@@ -77,6 +77,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
+// Helper: parse error message from response body
+async function getErrorFromResponse(response) {
+  let errorMsg = `status ${response.status}`;
+  try {
+    const errData = await response.json();
+    if (errData && errData.error) {
+      if (typeof errData.error === 'string') {
+        errorMsg += `: ${errData.error}`;
+      } else if (typeof errData.error === 'object' && errData.error.message) {
+        errorMsg += `: ${errData.error.message}`;
+      } else {
+        errorMsg += `: ${JSON.stringify(errData.error)}`;
+      }
+    } else if (errData && errData.message) {
+      errorMsg += `: ${errData.message}`;
+    } else {
+      errorMsg += `: ${JSON.stringify(errData)}`;
+    }
+  } catch (e) {
+    try {
+      const text = await response.text();
+      if (text) {
+        errorMsg += `: ${text.substring(0, 150)}`;
+      }
+    } catch (textErr) {}
+  }
+  return errorMsg;
+}
+
 // Helper: check API connection and return models list
 async function checkApiConnection(apiUrl, apiKey) {
   const cleanUrl = apiUrl.replace(/\/+$/, '');
@@ -91,7 +120,8 @@ async function checkApiConnection(apiUrl, apiKey) {
   });
 
   if (!response.ok) {
-    throw new Error(`Server returned status ${response.status}`);
+    const errDetail = await getErrorFromResponse(response);
+    throw new Error(`Server returned ${errDetail}`);
   }
 
   const data = await response.json();
@@ -153,7 +183,8 @@ Strict constraints:
   });
 
   if (!response.ok) {
-    throw new Error(`LLM API returned status ${response.status}`);
+    const errDetail = await getErrorFromResponse(response);
+    throw new Error(`LLM API returned ${errDetail}`);
   }
 
   const result = await response.json();
@@ -260,7 +291,10 @@ Return ONLY the direct translation. Do NOT add any preamble, explanations, numbe
         })
       });
 
-      if (!response.ok) throw new Error(`Status ${response.status}`);
+      if (!response.ok) {
+        const errDetail = await getErrorFromResponse(response);
+        throw new Error(`API returned ${errDetail}`);
+      }
       const result = await response.json();
       results[index] = result.choices[0].message.content.trim().replace(/^"|"$/g, '');
     } catch (err) {
