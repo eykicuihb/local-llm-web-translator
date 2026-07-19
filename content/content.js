@@ -38,16 +38,8 @@ function isCodeBlock(node) {
     return true;
   }
   const className = node.className;
-  if (typeof className === 'string') {
-    const classes = className.toLowerCase();
-    if (
-      classes.includes('code') ||
-      classes.includes('syntax') ||
-      classes.includes('prettyprint') ||
-      classes.includes('highlight') ||
-      classes.includes('prism') ||
-      classes.includes('hljs')
-    ) {
+  if (typeof className === 'string' && className.length > 0) {
+    if (/\b(highlight|syntax|prettyprint|prism|hljs|code-block|codeblock|cm-editor|monaco-editor)\b/i.test(className)) {
       return true;
     }
   }
