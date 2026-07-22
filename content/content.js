@@ -677,6 +677,7 @@ async function initSelectionTranslate() {
 
   // Track mouse position at all times (capture phase to see all events)
   const trackMouse = (e) => {
+    if (e.buttons !== undefined && e.buttons > 1) return; // Ignore right-click drags
     _lmtLastMouseX = e.clientX;
     _lmtLastMouseY = e.clientY;
   };
@@ -686,22 +687,25 @@ async function initSelectionTranslate() {
   // Track mouse button state for polling
   let _mouseDown = false;
   document.addEventListener('mousedown', (e) => {
+    if (e.button !== undefined && e.button !== 0) return; // Ignore right-click / middle-click
     _mouseDown = true;
     _lmtHideTriggerAndBubbleIfOutside(e);
   }, true);
   document.addEventListener('pointerdown', (e) => {
+    if (e.button !== undefined && e.button !== 0) return; // Ignore right-click / middle-click
     _mouseDown = true;
     _lmtHideTriggerAndBubbleIfOutside(e);
   }, true);
-  document.addEventListener('mouseup', () => { _mouseDown = false; }, true);
-  document.addEventListener('pointerup', () => { _mouseDown = false; }, true);
-  window.addEventListener('mouseup', () => { _mouseDown = false; }, true);
-  window.addEventListener('pointerup', () => { _mouseDown = false; }, true);
+  document.addEventListener('mouseup', (e) => { if (e.button === 0) _mouseDown = false; }, true);
+  document.addEventListener('pointerup', (e) => { if (e.button === 0) _mouseDown = false; }, true);
+  window.addEventListener('mouseup', (e) => { if (e.button === 0) _mouseDown = false; }, true);
+  window.addEventListener('pointerup', (e) => { if (e.button === 0) _mouseDown = false; }, true);
 
   // Event-based detection (works on most sites)
   let _selTimer = null;
   const onUp = (e) => {
     if (!selectionTranslateEnabled) return;
+    if (e.button !== undefined && e.button !== 0) return; // Crucial: ignore right-click (button 2) to preserve context menu Copy
     _lmtLastMouseX = e.clientX;
     _lmtLastMouseY = e.clientY;
     _mouseDown = false;
