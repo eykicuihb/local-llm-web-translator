@@ -701,6 +701,14 @@ async function initSelectionTranslate() {
   window.addEventListener('mouseup', (e) => { if (e.button === 0) _mouseDown = false; }, true);
   window.addEventListener('pointerup', (e) => { if (e.button === 0) _mouseDown = false; }, true);
 
+  // Hide trigger button on right-click contextmenu to prevent it from hijacking native contextmenu targets (e.g. Copy)
+  document.addEventListener('contextmenu', (e) => {
+    const trigger = document.getElementById('lmt-trigger');
+    if (trigger && trigger.style.display !== 'none') {
+      trigger.style.display = 'none';
+    }
+  }, true);
+
   // Event-based detection (works on most sites)
   let _selTimer = null;
   const onUp = (e) => {
