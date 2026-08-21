@@ -314,6 +314,13 @@ document.addEventListener('DOMContentLoaded', async () => {
           target: { tabId: activeTab.id },
           files: ['content/content.css']
         });
+        // Inject the document_start event tap BEFORE content.js — content.js
+        // depends on window.__lmtOnEvent provided by events.js for all
+        // selection-translate pointer handling.
+        await chrome.scripting.executeScript({
+          target: { tabId: activeTab.id },
+          files: ['content/events.js']
+        });
         // Inject content.js next
         await chrome.scripting.executeScript({
           target: { tabId: activeTab.id },

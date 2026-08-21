@@ -1021,7 +1021,6 @@ function _lmtShowBubble(text, posX, posY) {
         const copyBtn = bubble.querySelector('#lmt-copy-btn');
         if (copyBtn) {
           copyBtn._lmtActivate = async () => {
-            e.preventDefault(); e.stopPropagation();
             try {
               await navigator.clipboard.writeText(transText);
               copyBtn.innerHTML = `
