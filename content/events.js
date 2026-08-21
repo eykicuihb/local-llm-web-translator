@@ -24,8 +24,9 @@
   [
     'mousemove', 'pointermove',
     'mousedown', 'pointerdown',
-    'mouseup', 'pointerup',
-    'click'
+    'mouseup', 'pointerup', 'pointercancel',
+    'click',
+    'contextmenu'
   ].forEach(function (t) {
     var h = function (e) { fire(t, e); };
     document.addEventListener(t, h, true);

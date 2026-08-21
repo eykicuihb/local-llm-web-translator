@@ -13,6 +13,17 @@ let intersectionObserver = null;
 let lazyTranslateQueue = [];
 let lazyTranslateTimeout = null;
 
+// Drag controllers are fed exclusively by the __lmtOnEvent tap (see
+// initSelectionTranslate): element-level pointer listeners never fire on
+// hostile pages whose capture-phase handlers stopImmediatePropagation().
+const _lmtDragControllers = new Set();
+
+function _lmtDispatchToDrags(type, e) {
+  for (const ctrl of _lmtDragControllers) {
+    try { ctrl(type, e); } catch (err) { /* never break the host page */ }
+  }
+}
+
 // Clean text helper: removes excessive whitespaces
 function getCleanText(el) {
   return el.innerText.trim().replace(/\s+/g, ' ');
@@ -544,26 +555,15 @@ function createFloatingButton() {
 
   document.body.appendChild(widget);
 
-  // Bind click event
-  widget.addEventListener('click', async (e) => {
-    // Hide widget if close button is clicked
-    if (e.target.classList.contains('lmt-close-widget')) {
-      e.stopPropagation();
-      widget.classList.add('lmt-hidden-widget');
-      
-      // Stop/reset active translation if any
-      stopTranslation();
-
-      const domain = window.location.hostname;
-      const { ignoredDomains = [] } = await chrome.storage.local.get('ignoredDomains');
-      if (!ignoredDomains.includes(domain)) {
-        ignoredDomains.push(domain);
-        await chrome.storage.local.set({ ignoredDomains });
-      }
+  // Activation is dispatched via the __lmtOnEvent tap (see initSelectionTranslate):
+  // plain click handlers are unreachable on hostile pages that kill events in
+  // the capture phase.
+  widget._lmtActivate = async () => {
+    if (widget._lmtSuppressClick) {
+      widget._lmtSuppressClick = false;
       return;
     }
 
-    // Toggle or start translation
     if (!isTranslationActive) {
       await startTranslation();
     } else {
@@ -581,7 +581,21 @@ function createFloatingButton() {
       }
       updateWidgetState();
     }
-  });
+  };
+
+  const closeBtn = widget.querySelector('.lmt-close-widget');
+  closeBtn._lmtActivate = async () => {
+    widget.classList.add('lmt-hidden-widget');
+
+    stopTranslation();
+
+    const domain = window.location.hostname;
+    const { ignoredDomains = [] } = await chrome.storage.local.get('ignoredDomains');
+    if (!ignoredDomains.includes(domain)) {
+      ignoredDomains.push(domain);
+      await chrome.storage.local.set({ ignoredDomains });
+    }
+  };
 
   // Enable vertical dragging
   setupDrag(widget);
@@ -590,79 +604,50 @@ function createFloatingButton() {
   updateWidgetState();
 }
 
-// Enable dragging on the floating widget
+// Enable vertical dragging on the floating widget.
+// Registered as a drag controller driven by the __lmtOnEvent tap — direct
+// element/document listeners are dead on hostile pages, and pointer events
+// already cover touch (no separate touch handlers needed).
 function setupDrag(el) {
-  let isDragging = false;
+  let active = false;
   let startY = 0;
   let startTop = 0;
   let hasDragged = false;
 
-  el.addEventListener('mousedown', (e) => {
-    if (e.target.classList.contains('lmt-close-widget')) return;
-    isDragging = true;
-    hasDragged = false;
-    startY = e.clientY;
-    startTop = el.offsetTop;
-    el.style.transition = 'none';
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-  });
-
-  function onMouseMove(e) {
-    if (!isDragging) return;
-    const deltaY = e.clientY - startY;
-    if (Math.abs(deltaY) > 5) {
-      hasDragged = true;
+  _lmtDragControllers.add((type, e) => {
+    if (type === 'down') {
+      const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+      if (!path.includes(el)) return;
+      if (e.target && e.target.closest && e.target.closest('.lmt-close-widget')) return;
+      active = true;
+      hasDragged = false;
+      el._lmtSuppressClick = false;
+      startY = e.clientY;
+      startTop = el.offsetTop;
+      el.style.transition = 'none';
+      return;
     }
-    let newTop = startTop + deltaY;
-    const maxTop = window.innerHeight - el.offsetHeight - 20;
-    newTop = Math.max(20, Math.min(newTop, maxTop));
-    el.style.top = `${newTop}px`;
-    el.style.bottom = 'auto';
-  }
 
-  function onMouseUp(e) {
-    isDragging = false;
-    el.style.transition = 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)';
-    document.removeEventListener('mousemove', onMouseMove);
-    document.removeEventListener('mouseup', onMouseUp);
+    if (!active) return;
 
-    // If dragged, prevent trigger click behavior
-    if (hasDragged) {
-      const captureClick = (clickEvent) => {
-        clickEvent.stopPropagation();
-        el.removeEventListener('click', captureClick, true);
-      };
-      el.addEventListener('click', captureClick, true);
+    if (type === 'move') {
+      const deltaY = e.clientY - startY;
+      if (Math.abs(deltaY) > 5) hasDragged = true;
+      let newTop = startTop + deltaY;
+      const maxTop = window.innerHeight - el.offsetHeight - 20;
+      newTop = Math.max(20, Math.min(newTop, maxTop));
+      el.style.top = `${newTop}px`;
+      el.style.bottom = 'auto';
+      return;
     }
-  }
 
-  // Mobile Touch Support
-  el.addEventListener('touchstart', (e) => {
-    if (e.target.classList.contains('lmt-close-widget')) return;
-    isDragging = true;
-    hasDragged = false;
-    startY = e.touches[0].clientY;
-    startTop = el.offsetTop;
-    el.style.transition = 'none';
-  });
-
-  el.addEventListener('touchmove', (e) => {
-    if (!isDragging) return;
-    const deltaY = e.touches[0].clientY - startY;
-    if (Math.abs(deltaY) > 5) {
-      hasDragged = true;
+    if (type === 'up' || type === 'cancel') {
+      active = false;
+      el.style.transition = 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)';
+      // Swallow the click that follows a real drag so it doesn't toggle
+      // translation; cleared on the next gesture's down or next activate.
+      if (hasDragged) el._lmtSuppressClick = true;
     }
-    let newTop = startTop + deltaY;
-    const maxTop = window.innerHeight - el.offsetHeight - 20;
-    newTop = Math.max(20, Math.min(newTop, maxTop));
-    el.style.top = `${newTop}px`;
-    el.style.bottom = 'auto';
-  });
-
-  el.addEventListener('touchend', () => {
-    isDragging = false;
-    el.style.transition = 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)';
   });
 }
 
@@ -675,7 +660,6 @@ async function initSelectionTranslate() {
   const settings = await chrome.storage.local.get('selectionTranslateEnabled');
   selectionTranslateEnabled = settings.selectionTranslateEnabled !== false;
 
-  let _mouseDown = false;
   let _selTimer = null;
 
   // All pointer handling flows through window.__lmtOnEvent, fed by
@@ -687,30 +671,27 @@ async function initSelectionTranslate() {
   // trigger.onclick — that made the translate icon unclickable there.
   // The document_start tap registers before any page script, so it always
   // observes raw events; in return we never block the page's own handlers.
-  const hitOurUI = (e) => {
-    const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
-    for (const node of path) {
-      if (node && node._lmtActivate) return true;
-    }
-    const t = document.getElementById('lmt-trigger');
-    const b = document.getElementById('lmt-bubble');
-    if (t && (path.includes(t) || t.contains(e.target))) return true;
-    if (b && (path.includes(b) || b.contains(e.target))) return true;
-    return false;
-  };
-
   window.__lmtOnEvent = (type, e) => {
     try {
       if (type === 'mousemove' || type === 'pointermove') {
         if (e.buttons !== undefined && e.buttons > 1) return; // Ignore right-click drags
         _lmtLastMouseX = e.clientX;
         _lmtLastMouseY = e.clientY;
-        return;
       }
 
       // events.js taps BOTH window and document → every event arrives twice.
       if (e.__lmtSeen) return;
       e.__lmtSeen = true;
+
+      // Drags consume down/move/up/cancel before any feature gating.
+      const dragType = type === 'pointerdown' ? 'down'
+        : type === 'pointermove' ? 'move'
+        : type === 'pointerup' ? 'up'
+        : type === 'pointercancel' ? 'cancel'
+        : null;
+      if (dragType) _lmtDispatchToDrags(dragType, e);
+
+      if (type === 'pointercancel') return;
 
       const isDown = type === 'mousedown' || type === 'pointerdown';
       const isUp = type === 'mouseup' || type === 'pointerup';
@@ -718,8 +699,7 @@ async function initSelectionTranslate() {
 
       if (isDown) {
         if (e.button !== undefined && e.button !== 0) return; // Ignore right/middle-click
-        _mouseDown = true;
-        if (hitOurUI(e)) {
+        if (_lmtEventHitsUi(e)) {
           // Pressing our UI must not collapse the active selection or steal focus.
           if (e.cancelable) e.preventDefault();
         } else {
@@ -728,10 +708,22 @@ async function initSelectionTranslate() {
         return;
       }
 
-      if (isClick) {
+      if (isUp) {
         if (!selectionTranslateEnabled) return;
+        if (e.button !== undefined && e.button !== 0) return; // Preserve context-menu Copy
+        if (_lmtEventHitsUi(e)) return; // Clicking our own UI must not re-process the selection
+        _lmtLastMouseX = e.clientX;
+        _lmtLastMouseY = e.clientY;
+        clearTimeout(_selTimer);
+        _selTimer = setTimeout(() => _lmtProcessSelection(), 40);
+        return;
+      }
+
+      if (isClick) {
         // Route activation through the tap: plain onclick handlers are
         // unreachable when pages kill propagation in the capture phase.
+        // NOT gated on selectionTranslateEnabled — that flag only governs
+        // selection translate (the trigger), never the floating widget.
         const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
         for (const node of path) {
           if (node && typeof node._lmtActivate === 'function') {
@@ -743,26 +735,15 @@ async function initSelectionTranslate() {
         return;
       }
 
-      if (isUp) {
-        if (e.button === 0) _mouseDown = false;
-        if (!selectionTranslateEnabled) return;
-        if (e.button !== undefined && e.button !== 0) return; // Preserve context-menu Copy
-        if (hitOurUI(e)) return; // Clicking our own UI must not re-process the selection
-        _lmtLastMouseX = e.clientX;
-        _lmtLastMouseY = e.clientY;
-        clearTimeout(_selTimer);
-        _selTimer = setTimeout(() => _lmtProcessSelection(), 40);
+      if (type === 'contextmenu') {
+        // Hide the trigger so right-click "Copy" targets aren't hijacked by it.
+        const trigger = document.getElementById('lmt-trigger');
+        if (trigger && trigger.style.display !== 'none') {
+          trigger.style.display = 'none';
+        }
       }
     } catch (err) { /* Never break the host page */ }
   };
-
-  // Hide trigger button on right-click contextmenu to prevent it from hijacking native contextmenu targets (e.g. Copy)
-  document.addEventListener('contextmenu', (e) => {
-    const trigger = document.getElementById('lmt-trigger');
-    if (trigger && trigger.style.display !== 'none') {
-      trigger.style.display = 'none';
-    }
-  }, true);
 
   // Keyboard selections
   document.addEventListener('keyup', (e) => {
@@ -776,9 +757,9 @@ async function initSelectionTranslate() {
   // NUCLEAR FALLBACK: poll window.getSelection() every 300ms.
   // This catches GitHub and any site that blocks mouse/pointer events in the
   // capture phase (stopImmediatePropagation). Deduplication is handled solely
-  // by _pollLastText below — we deliberately do NOT guard on _mouseDown, because
-  // if the site blocks mouseup (but not mousedown), _mouseDown gets stuck true
-  // forever and this poll would never run, re-breaking GitHub.
+  // by _pollLastText below — do NOT gate this poll on pointer/drag state:
+  // if a site swallows mouseup, such state gets stuck and the poll would
+  // never run, re-breaking GitHub.
   let _pollLastText = '';
   setInterval(() => {
     if (!selectionTranslateEnabled) return;
@@ -796,16 +777,28 @@ async function initSelectionTranslate() {
   }, 300);
 }
 
+// Shared hit-test: did this event land on any of our UI? Checks the
+// composed path for _lmtActivate nodes first (works for every routed
+// element), with trigger/bubble contains() as fallback when composedPath
+// is unavailable.
+function _lmtEventHitsUi(e) {
+  const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+  for (const node of path) {
+    if (node && node._lmtActivate) return true;
+  }
+  const t = document.getElementById('lmt-trigger');
+  if (t && (path.includes(t) || t.contains(e.target))) return true;
+  const b = document.getElementById('lmt-bubble');
+  if (b && (path.includes(b) || b.contains(e.target))) return true;
+  return false;
+}
+
 function _lmtHideTriggerAndBubbleIfOutside(e) {
+  if (_lmtEventHitsUi(e)) return;
   const trigger = document.getElementById('lmt-trigger');
   const bubble = document.getElementById('lmt-bubble');
-  const path = e.composedPath ? e.composedPath() : [];
-
-  const inTrigger = trigger && (path.includes(trigger) || trigger.contains(e.target));
-  const inBubble = bubble && (path.includes(bubble) || bubble.contains(e.target));
-
-  if (!inTrigger && trigger) trigger.style.display = 'none';
-  if (!inBubble && bubble) bubble.style.display = 'none';
+  if (trigger) trigger.style.display = 'none';
+  if (bubble) bubble.style.display = 'none';
 }
 
 let _lmtLastProcessedText = '';
@@ -817,7 +810,11 @@ function _lmtProcessSelection() {
     if (!selection || selection.rangeCount === 0) return;
     const text = selection.toString().trim();
 
-    if (!text || text.length < 2 || text.length > 2000) return;
+    if (!text || text.length < 2) return;
+    if (text.length > 2000) {
+      _lmtShowHint();
+      return;
+    }
     if (/^[\d\s\p{P}]+$/u.test(text)) return;
 
     // Dedup: don't re-trigger the same text within 500ms
@@ -840,8 +837,52 @@ function _lmtProcessSelection() {
 
     _lmtShowTrigger(text, posX, posY);
   } catch (err) {
-    // Silently ignore to prevent breaking the page
+    // Swallowed to protect the host page, but logged — silent failures here
+    // once cost an entire debugging saga.
+    console.debug('[LMT]', err);
   }
+}
+
+// Small transient hint for selections we refuse to translate (oversize).
+function _lmtShowHint() {
+  let hint = document.getElementById('lmt-hint');
+  if (!hint) {
+    hint = document.createElement('div');
+    hint.id = 'lmt-hint';
+    document.documentElement.appendChild(hint);
+    Object.assign(hint.style, {
+      all: 'initial',
+      position: 'fixed',
+      zIndex: '2147483647',
+      width: '260px',
+      background: 'rgba(15, 23, 42, 0.95)',
+      backdropFilter: 'blur(16px)',
+      WebkitBackdropFilter: 'blur(16px)',
+      border: '1px solid rgba(255, 255, 255, 0.08)',
+      borderRadius: '10px',
+      boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.4)',
+      color: '#f8fafc',
+      padding: '10px 12px',
+      fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      fontSize: '12px',
+      lineHeight: '1.5',
+      pointerEvents: 'none',
+      boxSizing: 'border-box',
+      display: 'none'
+    });
+  }
+
+  const posX = Math.max(10, Math.min(_lmtLastMouseX + 10, window.innerWidth - 270));
+  const posY = Math.max(10, Math.min(_lmtLastMouseY + 14, window.innerHeight - 60));
+  hint.style.left = posX + 'px';
+  hint.style.top = posY + 'px';
+  hint.textContent = '选区过长（超过 2000 字符），暂不支持翻译';
+  hint.style.display = 'block';
+
+  clearTimeout(hint._lmtHideTimer);
+  hint._lmtHideTimer = setTimeout(() => {
+    hint.style.display = 'none';
+  }, 3000);
 }
 
 function _lmtShowTrigger(text, posX, posY) {
@@ -872,6 +913,7 @@ function _lmtShowTrigger(text, posX, posY) {
   // The mousedown preventDefault (avoid collapsing the selection when pressing
   // the icon) is likewise handled centrally in the tap.
   trigger._lmtActivate = () => {
+    if (!selectionTranslateEnabled) return;
     trigger.style.display = 'none';
     _lmtShowBubble(text, posX, posY);
   };
@@ -1008,8 +1050,11 @@ function _lmtShowBubble(text, posX, posY) {
         payload: { texts: [text] }
       });
 
-      if (response && response.success && response.translations && response.translations[0]) {
-        const transText = response.translations[0];
+      if (response && response.success && Array.isArray(response.translations)) {
+        const transText = String(response.translations[0] ?? '');
+        if (!transText.trim()) {
+          throw new Error('翻译结果为空，请重试');
+        }
         const loader = bubble.querySelector('#lmt-bubble-loader');
         const transField = bubble.querySelector('#lmt-bubble-trans');
         const footer = bubble.querySelector('#lmt-bubble-footer');
@@ -1050,70 +1095,60 @@ function _lmtShowBubble(text, posX, posY) {
   })();
 }
 
+// Bubble-header dragging, registered as a drag controller driven by the
+// __lmtOnEvent tap (direct pointer listeners are dead on hostile pages).
+// No setPointerCapture: it is meaningless across isolated worlds and the
+// tap already sees every raw event.
 function makeElementDraggable(element, handle) {
-  let isDragging = false;
+  let active = false;
   let startX = 0;
   let startY = 0;
   let initialLeft = 0;
   let initialTop = 0;
 
-  handle.addEventListener('pointerdown', (e) => {
-    // Only drag with left click / primary pointer touch
-    if (e.button !== 0) return;
-    // Don't drag if clicking the close button
-    if (e.target.closest('#lmt-bubble-close-btn')) return;
-
-    isDragging = true;
-    startX = e.clientX;
-    startY = e.clientY;
-
-    const rect = element.getBoundingClientRect();
-    initialLeft = rect.left;
-    initialTop = rect.top;
-
-    try {
-      handle.setPointerCapture(e.pointerId);
-    } catch (err) {
-      console.warn("setPointerCapture failed:", err);
+  _lmtDragControllers.add((type, e) => {
+    if (type === 'down') {
+      const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+      if (!path.includes(handle)) return;
+      if (e.target && e.target.closest && e.target.closest('#lmt-bubble-close-btn')) return;
+      if (e.button !== undefined && e.button !== 0) return; // Primary pointer only
+      active = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = element.getBoundingClientRect();
+      initialLeft = rect.left;
+      initialTop = rect.top;
+      if (e.cancelable) e.preventDefault(); // Avoid text selection while dragging
+      return;
     }
-    e.preventDefault();
-  });
 
-  handle.addEventListener('pointermove', (e) => {
-    if (!isDragging) return;
+    if (!active) return;
 
-    const dx = e.clientX - startX;
-    const dy = e.clientY - startY;
+    if (type === 'move') {
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
 
-    let newLeft = initialLeft + dx;
-    let newTop = initialTop + dy;
+      let newLeft = initialLeft + dx;
+      let newTop = initialTop + dy;
 
-    // Bounds check to keep bubble within the screen viewport
-    const rect = element.getBoundingClientRect();
-    const minX = 10;
-    const maxX = window.innerWidth - rect.width - 10;
-    const minY = 10;
-    const maxY = window.innerHeight - rect.height - 10;
+      const rect = element.getBoundingClientRect();
+      const minX = 10;
+      const maxX = window.innerWidth - rect.width - 10;
+      const minY = 10;
+      const maxY = window.innerHeight - rect.height - 10;
 
-    newLeft = Math.max(minX, Math.min(newLeft, maxX));
-    newTop = Math.max(minY, Math.min(newTop, maxY));
+      newLeft = Math.max(minX, Math.min(newLeft, maxX));
+      newTop = Math.max(minY, Math.min(newTop, maxY));
 
-    element.style.left = newLeft + 'px';
-    element.style.top = newTop + 'px';
-  });
-
-  const stopDrag = (e) => {
-    if (!isDragging) return;
-    isDragging = false;
-    try {
-      handle.releasePointerCapture(e.pointerId);
-    } catch (err) {
-      // ignore
+      element.style.left = newLeft + 'px';
+      element.style.top = newTop + 'px';
+      return;
     }
-  };
 
-  handle.addEventListener('pointerup', stopDrag);
-  handle.addEventListener('pointercancel', stopDrag);
+    if (type === 'up' || type === 'cancel') {
+      active = false;
+    }
+  });
 }
 
 function escapeHtml(text) {
