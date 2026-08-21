@@ -399,7 +399,7 @@ input:disabled + .slider {
   flex-grow: 1;
 }
 
-input[type="text"], input[type="password"], input[type="number"] {
+input[type="text"], input[type="password"], input[type="number"], textarea {
   width: 100%;
   background-color: rgba(15, 23, 42, 0.8);
   border: 1px solid var(--card-border);
@@ -409,6 +409,12 @@ input[type="text"], input[type="password"], input[type="number"] {
   font-size: 13px;
   outline: none;
   transition: border-color 0.2s;
+}
+
+textarea {
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.5;
 }
 
 input:focus {

@@ -99,6 +99,18 @@
             </select>
           </div>
         </div>
+
+        <!-- Translation Style Dropdown -->
+        <div class="control-group">
+          <label for="translation-style" class="control-label">Translation Style</label>
+          <div class="select-wrapper">
+            <select id="translation-style">
+              <option value="solid">Solid Border</option>
+              <option value="dashed">Dashed Underline</option>
+              <option value="blur">Blur Original</option>
+            </select>
+          </div>
+        </div>
       </section>
 
       <!-- Progress Tracking Card -->
@@ -153,6 +165,12 @@
             <label for="concurrency" class="control-label">Concurrency</label>
             <input type="number" id="concurrency" min="1" max="10" value="3">
           </div>
+        </div>
+
+        <!-- Custom Translation Instructions -->
+        <div class="control-group">
+          <label for="custom-prompt" class="control-label">Custom Translation Instructions (optional)</label>
+          <textarea id="custom-prompt" rows="3" placeholder="e.g. Use a formal tone. Keep product names untranslated. Glossary: LLM=大语言模型"></textarea>
         </div>
 
         <!-- Ignored Sites Manager -->

@@ -26,7 +26,8 @@
     'mousedown', 'pointerdown',
     'mouseup', 'pointerup', 'pointercancel',
     'click',
-    'contextmenu'
+    'contextmenu',
+    'keydown', 'keyup'
   ].forEach(function (t) {
     var h = function (e) { fire(t, e); };
     document.addEventListener(t, h, true);

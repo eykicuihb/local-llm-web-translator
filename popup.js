@@ -26,6 +26,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const modelSelect = document.getElementById('model-select');
   const batchSizeInput = document.getElementById('batch-size');
   const concurrencyInput = document.getElementById('concurrency');
+  const customPromptInput = document.getElementById('custom-prompt');
+  const translationStyleSelect = document.getElementById('translation-style');
 
   // UI Elements - Progress Tracking
   const progressCard = document.getElementById('progress-card');
@@ -74,7 +76,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 2. Load stored settings from storage
     const settings = await chrome.storage.local.get([
-      'provider', 'apiUrl', 'modelName', 'apiKey', 'targetLang', 'translationMode', 'concurrency', 'batchSize', 'selectionTranslateEnabled'
+      'provider', 'apiUrl', 'modelName', 'apiKey', 'targetLang', 'translationMode', 'concurrency', 'batchSize', 'selectionTranslateEnabled', 'customPrompt', 'translationStyle'
     ]);
 
     // Apply values to UI
@@ -86,6 +88,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     batchSizeInput.value = settings.batchSize || 10;
     concurrencyInput.value = settings.concurrency || 3;
     selectionTranslateToggle.checked = settings.selectionTranslateEnabled !== false;
+    customPromptInput.value = settings.customPrompt || '';
+    translationStyleSelect.value = settings.translationStyle || 'solid';
 
     // 3. Check Connection & load models
     await checkLlmConnection(apiUrlInput.value, apiKeyInput.value, settings.modelName || 'current');
@@ -257,7 +261,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       apiUrl: apiUrlInput.value.trim(),
       apiKey: apiKeyInput.value.trim(),
       batchSize: parseInt(batchSizeInput.value, 10) || 10,
-      concurrency: parseInt(concurrencyInput.value, 10) || 3
+      concurrency: parseInt(concurrencyInput.value, 10) || 3,
+      customPrompt: customPromptInput.value
     };
 
     await chrome.storage.local.set(settings);
@@ -348,6 +353,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Content script might not be loaded yet
       }
     }
+  });
+
+  // Translation Style dropdown change — content scripts pick the change up
+  // via chrome.storage.onChanged, no per-tab messaging needed.
+  translationStyleSelect.addEventListener('change', async () => {
+    await chrome.storage.local.set({ translationStyle: translationStyleSelect.value });
   });
 
   // Manual Trigger "Translate Page" Click

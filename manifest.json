@@ -19,6 +19,14 @@
   "background": {
     "service_worker": "background.js"
   },
+  "commands": {
+    "toggle-page-translation": {
+      "suggested_key": {
+        "default": "Alt+A"
+      },
+      "description": "Toggle page translation"
+    }
+  },
   "content_scripts": [
     {
       "matches": [

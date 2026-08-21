@@ -24,6 +24,10 @@ function _lmtDispatchToDrags(type, e) {
   }
 }
 
+// Elements whose batch translation failed; surfaced as a retry badge on the
+// floating widget instead of disappearing silently.
+const _lmtFailedElements = new Set();
+
 // Clean text helper: removes excessive whitespaces
 function getCleanText(el) {
   return el.innerText.trim().replace(/\s+/g, ' ');
@@ -241,22 +245,92 @@ async function translateBatchElements(elements) {
               el.setAttribute('data-lmt-translated', 'true');
             } else {
               el.removeAttribute('data-lmt-translated');
+              _lmtFailedElements.add(el);
             }
           }
           resolve();
         });
       });
 
-      translatedCount += elements.length;
-      sendProgressUpdate();
+      if (isTranslationActive) {
+        translatedCount += elements.length;
+        sendProgressUpdate();
+      }
+      updateFailedBadge();
     } else {
       throw new Error(response ? response.error : 'Unknown response error');
     }
   } catch (err) {
     console.error('Batch translation error:', err);
     // Reset attribute so elements can be retried
-    elements.forEach(el => el.removeAttribute('data-lmt-translated'));
+    elements.forEach(el => {
+      el.removeAttribute('data-lmt-translated');
+      _lmtFailedElements.add(el);
+    });
+    updateFailedBadge();
   }
+}
+
+// Shared toggle used by the floating widget, the popup visibility flow and
+// the Alt+A command message.
+async function togglePageTranslation() {
+  if (!isTranslationActive) {
+    await startTranslation();
+    return;
+  }
+  const isHidden = document.body.classList.contains('lmt-hide-translations');
+  if (isHidden) {
+    document.body.classList.remove('lmt-hide-translations');
+    resumeTranslation();
+  } else {
+    hideTranslations();
+  }
+  updateWidgetState();
+}
+
+function hideTranslations() {
+  document.body.classList.add('lmt-hide-translations');
+  lazyTranslateQueue = [];
+  if (lazyTranslateTimeout) {
+    clearTimeout(lazyTranslateTimeout);
+    lazyTranslateTimeout = null;
+  }
+}
+
+function updateFailedBadge() {
+  _lmtFailedElements.forEach((el) => {
+    if (!el.isConnected) _lmtFailedElements.delete(el);
+  });
+
+  const widget = document.getElementById('lmt-floating-widget');
+  if (!widget) return;
+
+  let badge = widget.querySelector('.lmt-retry-badge');
+  if (_lmtFailedElements.size === 0) {
+    if (badge) badge.remove();
+    return;
+  }
+
+  if (!badge) {
+    badge = document.createElement('div');
+    badge.className = 'lmt-retry-badge';
+    badge.title = '部分段落翻译失败，点击重试';
+    badge._lmtActivate = () => retryFailedElements();
+    widget.appendChild(badge);
+  }
+  badge.style.display = 'flex';
+  badge.textContent = '↻';
+}
+
+async function retryFailedElements() {
+  const els = [..._lmtFailedElements].filter(el => el.isConnected && !el.getAttribute('data-lmt-translated'));
+  _lmtFailedElements.clear();
+  updateFailedBadge();
+  if (els.length === 0) return;
+
+  els.forEach(el => el.setAttribute('data-lmt-translated', 'translating'));
+  const settings = await chrome.storage.local.get(['batchSize', 'concurrency']);
+  await processQueue(els, { batchSize: settings.batchSize || 10, concurrency: settings.concurrency || 3 });
 }
 
 // Inject translation node into the DOM
@@ -348,6 +422,8 @@ function stopTranslation() {
 
   translatedCount = 0;
   totalCount = 0;
+  _lmtFailedElements.clear();
+  updateFailedBadge();
 
   updateWidgetState();
 }
@@ -461,6 +537,99 @@ function setTranslationModeClass(mode) {
   }
 }
 
+const _lmtStyleClasses = ['lmt-style-dashed', 'lmt-style-blur'];
+
+function setTranslationStyleClass(style) {
+  _lmtStyleClasses.forEach(c => document.body.classList.remove(c));
+  if (style === 'dashed') document.body.classList.add('lmt-style-dashed');
+  else if (style === 'blur') document.body.classList.add('lmt-style-blur');
+}
+
+// --- Keyboard interactions (fed by the __lmtOnEvent tap) ---
+
+// Ctrl held ALONE (no other key during the hold) translates the paragraph
+// under the cursor; this keeps Ctrl+C / Ctrl+A etc. untouched.
+let _ctrlAlone = false;
+let _ctrlCombo = false;
+
+function _lmtHandleKey(type, e) {
+  try {
+    if (type === 'keydown') {
+      if (e.key === 'Control' && !e.repeat) {
+        _ctrlAlone = true;
+        _ctrlCombo = false;
+      } else if (_ctrlAlone && e.key !== 'Control') {
+        _ctrlCombo = true;
+      }
+      if (e.key === ' ') _lmtMaybeInputTranslate(e);
+      return;
+    }
+
+    if (e.key === 'Control' && _ctrlAlone) {
+      _ctrlAlone = false;
+      if (!_ctrlCombo) _lmtHoverTranslate();
+    }
+  } catch (err) {
+    console.debug('[LMT]', err);
+  }
+}
+
+function _lmtIsEditableTarget(t) {
+  if (!t || !t.tagName) return false;
+  const tag = t.tagName.toUpperCase();
+  if (tag === 'TEXTAREA') return true;
+  if (tag === 'INPUT') {
+    const ty = (t.type || 'text').toLowerCase();
+    return !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range'].includes(ty);
+  }
+  return t.isContentEditable === true;
+}
+
+function _lmtHoverTranslate() {
+  if (_lmtIsEditableTarget(document.activeElement)) return;
+
+  let el = document.elementFromPoint(_lmtLastMouseX, _lmtLastMouseY);
+  while (el) {
+    if (el.closest && el.closest('#lmt-floating-widget,#lmt-bubble,#lmt-trigger,#lmt-hint,.lmt-translation')) return;
+    if (isTranslationCandidate(el)) break;
+    el = el.parentElement;
+  }
+  if (!el || el === document.documentElement || el === document.body) return;
+  if (el.hasAttribute('data-lmt-translated')) return;
+
+  translateBatchElements([el]);
+}
+
+// Input-box translate: typing "text␣␣␣" (three trailing spaces) in an
+// input/textarea swaps the content for its translation. Detection happens on
+// the THIRD space's keydown, when the value holds exactly two trailing spaces
+// (the third is only inserted afterwards by the default action). The
+// pre-trigger value is snapshotted so keystrokes that land while the LLM
+// responds are never clobbered.
+function _lmtMaybeInputTranslate(e) {
+  const t = e.target;
+  if (!_lmtIsEditableTarget(t) || t.isContentEditable) return;
+
+  const raw = typeof t.value === 'string' ? t.value : '';
+  if (!raw.endsWith('  ')) return;
+  const source = raw.slice(0, -2);
+  if (!source.trim()) return;
+
+  if (e.cancelable) e.preventDefault();
+  const snapshot = raw;
+
+  chrome.runtime.sendMessage({ type: 'TRANSLATE_BATCH', payload: { texts: [source] } })
+    .then((res) => {
+      if (!res || !res.success || !Array.isArray(res.translations)) return;
+      const out = String(res.translations[0] ?? '').trim();
+      if (!out) return;
+      if (t.value !== snapshot) return;
+      t.value = out;
+      t.dispatchEvent(new Event('input', { bubbles: true }));
+    })
+    .catch(() => {});
+}
+
 // Update floating widget UI state based on active translation/visibility state
 function updateWidgetState() {
   const widget = document.getElementById('lmt-floating-widget');
@@ -537,6 +706,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     sendResponse({ success: true });
   }
+
+  if (message.type === 'TOGGLE_TRANSLATION') {
+    togglePageTranslation();
+    sendResponse({ success: true });
+  }
 });
 
 // Create and inject the floating widget button
@@ -564,23 +738,7 @@ function createFloatingButton() {
       return;
     }
 
-    if (!isTranslationActive) {
-      await startTranslation();
-    } else {
-      const isHidden = document.body.classList.contains('lmt-hide-translations');
-      if (isHidden) {
-        document.body.classList.remove('lmt-hide-translations');
-        resumeTranslation();
-      } else {
-        document.body.classList.add('lmt-hide-translations');
-        lazyTranslateQueue = [];
-        if (lazyTranslateTimeout) {
-          clearTimeout(lazyTranslateTimeout);
-          lazyTranslateTimeout = null;
-        }
-      }
-      updateWidgetState();
-    }
+    await togglePageTranslation();
   };
 
   const closeBtn = widget.querySelector('.lmt-close-widget');
@@ -692,6 +850,12 @@ async function initSelectionTranslate() {
       if (dragType) _lmtDispatchToDrags(dragType, e);
 
       if (type === 'pointercancel') return;
+
+      if (type === 'keydown' || type === 'keyup') {
+        // Ignore IME composition events (keyCode 229) — critical for CJK input.
+        if (!e.isComposing && e.keyCode !== 229) _lmtHandleKey(type, e);
+        return;
+      }
 
       const isDown = type === 'mousedown' || type === 'pointerdown';
       const isUp = type === 'mouseup' || type === 'pointerup';
@@ -1006,7 +1170,11 @@ function _lmtShowBubble(text, posX, posY) {
       </div>
       <div id="lmt-bubble-trans" style="display:none;color:#f1f5f9;font-size:13px;line-height:1.6;word-break:break-word;"></div>
     </div>
-    <div id="lmt-bubble-footer" style="display:none;padding:6px 12px;border-top:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);">
+    <div id="lmt-bubble-footer" style="display:none;gap:8px;padding:6px 12px;border-top:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);">
+      <button id="lmt-speak-btn" title="朗读原文" style="all:initial;cursor:pointer;display:flex;align-items:center;gap:4px;color:#94a3b8;font-size:11px;padding:4px 8px;border-radius:4px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.03);pointer-events:auto;font-family:inherit;">
+        <svg style="width:12px;height:12px;fill:currentColor" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05A4.47 4.47 0 0 0 16.5 12zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+        朗读
+      </button>
       <button id="lmt-copy-btn" style="all:initial;cursor:pointer;display:flex;align-items:center;gap:4px;color:#94a3b8;font-size:11px;padding:4px 8px;border-radius:4px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.03);pointer-events:auto;font-family:inherit;">
         <svg style="width:12px;height:12px;fill:currentColor" viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
         复制
@@ -1026,6 +1194,32 @@ function _lmtShowBubble(text, posX, posY) {
   bubble.querySelector('#lmt-bubble-close-btn')._lmtActivate = () => {
     bubble.style.display = 'none';
   };
+
+  // Speak the original selection with the browser's built-in TTS. Clicking
+  // again cancels playback.
+  const SPEAK_ICON = '<svg style="width:12px;height:12px;fill:currentColor" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05A4.47 4.47 0 0 0 16.5 12zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg> 朗读';
+  const STOP_ICON = '<svg style="width:12px;height:12px;fill:currentColor" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg> 停止';
+  const speakBtn = bubble.querySelector('#lmt-speak-btn');
+  if (speakBtn) {
+    speakBtn._lmtActivate = () => {
+      const synth = window.speechSynthesis;
+      if (!synth) return;
+      if (synth.speaking || synth.pending) {
+        synth.cancel();
+        speakBtn.innerHTML = SPEAK_ICON;
+        return;
+      }
+      try {
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.onend = () => { speakBtn.innerHTML = SPEAK_ICON; };
+        utterance.onerror = () => { speakBtn.innerHTML = SPEAK_ICON; };
+        synth.speak(utterance);
+        speakBtn.innerHTML = STOP_ICON;
+      } catch (err) {
+        console.debug('[LMT] speech synthesis failed:', err);
+      }
+    };
+  }
 
   // Set up dragging
   const header = bubble.querySelector('#lmt-bubble-header');
@@ -1167,7 +1361,7 @@ function escapeHtml(text) {
 // ignoredDomains) silently also kills selection translation on that site.
 (async () => {
   const domain = window.location.hostname;
-  const { ignoredDomains = [] } = await chrome.storage.local.get('ignoredDomains');
+  const { ignoredDomains = [], translationStyle } = await chrome.storage.local.get(['ignoredDomains', 'translationStyle']);
   const showWidget = !ignoredDomains.includes(domain);
 
   const start = () => {
@@ -1176,6 +1370,7 @@ function escapeHtml(text) {
       createFloatingButton();
     }
     initSelectionTranslate();
+    setTranslationStyleClass(translationStyle);
   };
 
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
@@ -1184,3 +1379,10 @@ function escapeHtml(text) {
     window.addEventListener('DOMContentLoaded', start);
   }
 })();
+
+// Live-apply style changes from the popup without a reload.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.translationStyle) {
+    setTranslationStyleClass(changes.translationStyle.newValue);
+  }
+});

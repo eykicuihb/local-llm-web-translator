@@ -33,6 +33,16 @@ Legend: [ ] todo · [x] done · [~] deferred with rationale
 - [x] E1. README: file structure += events.js; document 划词翻译 + ignored-domains + how to re-enable a domain
 - [x] E2. CHROMEWEBSTORE.md: permissions table += tabs / declarativeNetRequest; storage keys += ignoredDomains / loadedModels
 
+## F. UX enhancements (immersive-translate parity, 2026-08-22)
+Source: feature research against Immersive Translate; filtered for fit with local-LLM scope.
+- [x] F1. Hover translate: press Ctrl while hovering a paragraph → translate just it (Ctrl+C/A untouched via alone-key detection; IME-safe)
+- [x] F2. Selection bubble speak button — browser TTS reads the original selection, click again to stop
+- [x] F3. Custom translation instructions (popup drawer) appended to both batch & individual LLM system prompts
+- [x] F4. Input-box translate: three-space gesture swaps typed text for its translation (keydown-timing aware, snapshot-guarded)
+- [x] F5. Global shortcut Alt+A toggles page translation (manifest commands + injection fallback in SW)
+- [x] F6. Translation Style dropdown: solid border (default) / dashed underline / blur original (live-applied via storage.onChanged)
+- [x] F7. Failed paragraphs surface as a ↻ badge on the widget; click retries them against current settings
+
 ## Deferred (documented, not fixed now)
 - [~] N1. all_frames translates ad/tracking iframes too — needed for Claude.ai-artifact-style frames; filtering heuristics are fragile. Documented as limitation.
 - [~] N2. Keyboard-only selections position the trigger at stale mouse coords. Minor UX.

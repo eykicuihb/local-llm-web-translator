@@ -18,8 +18,20 @@ A sleek, lightweight Chrome Extension that translates web pages in-place (dual-l
     *   **Ollama 免配置跨域越过**：动态修改 HTTP 请求头以剥离跨域 Origin 限制，让你可以直接连通本地 Ollama 服务，无需修改 Ollama 的环境变量或启动参数。
 *   **Premium Glassmorphic UI**: Sleek, modern dark-theme popup card with real-time translation progress indicators.
     *   **毛玻璃暗黑 UI**：高颜值的现代化控制面板，支持实时展现网页翻译进度。
-*   **Selection Translate (划词翻译)**: Select any text on a page and a small icon appears next to your cursor. Click it to get an instant translation in a floating bubble (draggable, with copy button).
-    *   **划词翻译**：选中网页任意文字后，鼠标旁会出现翻译小图标，点击即在可拖拽的悬浮气泡中显示译文（支持一键复制）。
+*   **Selection Translate (划词翻译)**: Select any text on a page and a small icon appears next to your cursor. Click it to get an instant translation in a floating bubble (draggable, with copy button and text-to-speech).
+    *   **划词翻译**：选中网页任意文字后，鼠标旁会出现翻译小图标，点击即在可拖拽的悬浮气泡中显示译文（支持一键复制与语音朗读）。
+*   **Hover Translate (悬停翻译)**: Hover over any paragraph and press `Ctrl` to translate just that paragraph in place. `Ctrl+C` / `Ctrl+A` etc. are never affected.
+    *   **悬停翻译**：鼠标悬停任意段落，单独按下 `Ctrl` 即可原位翻译该段；不影响 Ctrl+C/A 等组合键。
+*   **Input Box Translation (输入框翻译)**: Type your text into any input box, then hit `Space` three times — the typed text is swapped for its translation. Great for searching or chatting in another language.
+    *   **输入框翻译**：在任意输入框输入文字后连按三次空格，输入内容即被替换为译文，跨语言搜索/聊天无需切换窗口。
+*   **Custom Translation Instructions (自定义翻译指令)**: In ⚙️ Advanced Settings you can append style rules or a glossary (e.g. "keep product names untranslated") to every LLM request.
+    *   **自定义翻译指令**：在 ⚙️ 高级设置中可为每次请求附加风格要求或术语表（如“产品名保留英文”）。
+*   **Translation Styles (翻译样式)**: Choose between solid border, dashed underline, or blurred original under "Translation Style" — applied live on translated pages.
+    *   **翻译样式**：Translation Style 下拉可选实线边框（默认）/ 虚线下划线 / 原文模糊，已翻译页面实时生效。
+*   **Retry Failed Paragraphs (失败重试)**: If some paragraphs fail to translate (server hiccup, model loading), a red ↻ badge appears on the floating widget — click it to retry.
+    *   **失败重试**：部分段落翻译失败时，悬浮球上会出现红色 ↻ 徽标，点击即可用当前设置重试。
+*   **Global Shortcut (全局快捷键)**: Press `Alt+A` on any page to start / toggle translation without opening the popup (customizable at chrome://extensions/shortcuts).
+    *   **全局快捷键**：任意页面按 `Alt+A` 即可开始/切换整页翻译，无需打开弹窗（可在 chrome://extensions/shortcuts 自定义）。
 *   **Floating Translate Widget**: A right-aligned floating button that sticks to the page side (Immersive Translate style) with:
     *   **右侧吸附悬浮窗**：在页面右侧提供像沉浸式翻译一样的悬浮球：
         *   **Vertical Drag-and-Drop**: Easily move the widget vertically. Click suppression prevents accidental triggers on drag.
