@@ -109,10 +109,7 @@ async function getErrorFromResponse(response) {
 // Helper: check API connection and return models list
 async function checkApiConnection(apiUrl, apiKey) {
   const cleanUrl = apiUrl.replace(/\/+$/, '');
-  const headers = { 'Content-Type': 'application/json' };
-  if (apiKey) {
-    headers['Authorization'] = `Bearer ${apiKey}`;
-  }
+  const headers = buildApiHeaders(apiKey);
 
   const response = await fetch(`${cleanUrl}/models`, {
     method: 'GET',
@@ -129,33 +126,46 @@ async function checkApiConnection(apiUrl, apiKey) {
   return { connected: true, models };
 }
 
-// Helper: translate a batch of texts using settings
-async function translateBatch(texts, settings) {
-  const { apiUrl, modelName, apiKey, targetLang } = settings;
-  const targetLangFull = LANGUAGE_MAP[targetLang] || targetLang;
-
-  const cleanUrl = apiUrl.replace(/\/+$/, '');
+// Shared auth/JSON header builder
+function buildApiHeaders(apiKey) {
   const headers = { 'Content-Type': 'application/json' };
   if (apiKey) {
     headers['Authorization'] = `Bearer ${apiKey}`;
   }
+  return headers;
+}
 
-  // Set the model ID correctly (omit model for LM Studio current loaded, or try to supply it if specified)
-  let selectedModel = modelName;
-  if (modelName === 'current') {
-    // Attempt to query models list to find the first loaded model name,
-    // which helps backends that require the model field to be non-empty (like Ollama or OpenAI)
-    try {
-      const conn = await checkApiConnection(apiUrl, apiKey);
-      if (conn.models && conn.models.length > 0) {
-        selectedModel = conn.models[0].id;
-      } else {
-        selectedModel = 'default';
-      }
-    } catch (e) {
-      selectedModel = 'default';
-    }
+// Resolve the effective model id for a request. 'current' means "whatever
+// the local server has loaded": ask /models and take the first entry.
+// Memoized briefly so batch translation doesn't hit /models once per batch.
+let _modelResolveCache = { id: null, expires: 0 };
+async function resolveModel(settings) {
+  if (settings.modelName && settings.modelName !== 'current') {
+    return settings.modelName;
   }
+  const now = Date.now();
+  if (_modelResolveCache.id && now < _modelResolveCache.expires) {
+    return _modelResolveCache.id;
+  }
+  try {
+    const conn = await checkApiConnection(settings.apiUrl, settings.apiKey);
+    const id = (conn.models && conn.models.length > 0) ? conn.models[0].id : 'default';
+    _modelResolveCache = { id, expires: now + 60000 };
+    return id;
+  } catch (e) {
+    return 'default';
+  }
+}
+
+// Helper: translate a batch of texts using settings
+async function translateBatch(texts, settings) {
+  const { apiUrl, apiKey, targetLang } = settings;
+  const targetLangFull = LANGUAGE_MAP[targetLang] || targetLang;
+
+  const cleanUrl = apiUrl.replace(/\/+$/, '');
+  const headers = buildApiHeaders(apiKey);
+
+  const selectedModel = await resolveModel(settings);
 
   const systemPrompt = `You are a professional, accurate translation assistant. Translate the user's input JSON array of strings into ${targetLangFull}.
 
@@ -243,27 +253,12 @@ async function parseLLMResponse(rawText, expectedLength, originalTexts, settings
 
 // Fallback method: translate each sentence one by one
 async function translateIndividually(texts, settings) {
-  const { apiUrl, modelName, apiKey, targetLang, concurrency = 3 } = settings;
+  const { apiUrl, apiKey, targetLang, concurrency = 3 } = settings;
   const targetLangFull = LANGUAGE_MAP[targetLang] || targetLang;
   const cleanUrl = apiUrl.replace(/\/+$/, '');
-  const headers = { 'Content-Type': 'application/json' };
-  if (apiKey) {
-    headers['Authorization'] = `Bearer ${apiKey}`;
-  }
+  const headers = buildApiHeaders(apiKey);
 
-  let selectedModel = modelName;
-  if (modelName === 'current') {
-    try {
-      const conn = await checkApiConnection(apiUrl, apiKey);
-      if (conn.models && conn.models.length > 0) {
-        selectedModel = conn.models[0].id;
-      } else {
-        selectedModel = 'default';
-      }
-    } catch (e) {
-      selectedModel = 'default';
-    }
-  }
+  const selectedModel = await resolveModel(settings);
 
   const results = new Array(texts.length);
 
@@ -299,7 +294,9 @@ Return ONLY the direct translation. Do NOT add any preamble, explanations, numbe
       results[index] = result.choices[0].message.content.trim().replace(/^"|"$/g, '');
     } catch (err) {
       console.error(`Failed to translate item ${index}:`, err);
-      results[index] = `[Translation Error: ${err.message}]`; // Fallback placeholder
+      // Empty string on purpose: the content script skips empty translations
+      // instead of injecting "[Translation Error: …]" garbage into the page.
+      results[index] = '';
     }
   };
 
