@@ -35,6 +35,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Current tab state
   let activeTab = null;
+  // True once the user explicitly picks a model in the dropdown; until then
+  // storage keeps its existing value ('current' sentinel included).
+  let modelDirty = false;
+  // Per-frame translation progress (all_frames content scripts report independently)
+  const frameProgress = new Map();
+
+  const modelId = (m) => (typeof m === 'string' ? m : (m && (m.id || m.name)) || '');
 
   // Initialize: Load Settings & Set Active Tab
   await initPopup();
@@ -97,7 +104,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function checkTabStatus() {
     if (!activeTab) return;
     try {
-      const response = await chrome.tabs.sendMessage(activeTab.id, { type: 'GET_PAGE_STATUS' });
+      // Main frame is authoritative for "has page translation started";
+      // querying all frames lets an arbitrary iframe win the response race.
+      const response = await chrome.tabs.sendMessage(activeTab.id, { type: 'GET_PAGE_STATUS' }, { frameId: 0 });
       if (response) {
         showTranslationToggle.disabled = false;
         showTranslationToggle.checked = true; // Visibility is on by default once translated
@@ -147,22 +156,23 @@ document.addEventListener('DOMContentLoaded', async () => {
           });
         }
         
-        // Select active model - if set to 'current' and we have models, auto-select the first model name
+        // Select active model for DISPLAY only — storage keeps the user's
+        // actual choice ('current' sentinel included). Auto-resolving here
+        // used to overwrite 'current' in storage, silently pinning whatever
+        // model happened to be first at popup-open time.
         let activeModel = currentModel || 'current';
         if (activeModel === 'current' && response.models && response.models.length > 0) {
           const firstModel = typeof response.models[0] === 'string' ? response.models[0] : (response.models[0].id || response.models[0].name);
           if (firstModel) {
             activeModel = firstModel;
-            // Persist the auto-selected model
-            await chrome.storage.local.set({ modelName: activeModel });
           }
         }
         modelSelect.value = activeModel;
 
         // Display current model badge in status
         modelRow.classList.remove('hidden');
-        const activeModelName = modelSelect.value === 'current' 
-          ? (response.models.length > 0 ? (typeof response.models[0] === 'string' ? response.models[0] : (response.models[0].id || response.models[0].name || 'current')) : 'current')
+        const activeModelName = modelSelect.value === 'current'
+          ? (response.models.length > 0 ? modelId(response.models[0]) || 'current' : 'current')
           : modelSelect.value;
         modelNameDisplay.textContent = activeModelName;
         
@@ -212,9 +222,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     await chrome.storage.local.set(settings);
     settingsDrawer.classList.add('hidden');
-    
-    // Retrieve currently selected model from the main dropdown
-    const storedModel = modelSelect.value;
+
+    // Retrieve currently selected model from the main dropdown — but only if
+    // the user actually touched it; otherwise keep storage untouched so the
+    // 'current' sentinel survives a mere Save & Connect.
+    let storedModel;
+    if (modelDirty) {
+      storedModel = modelSelect.value;
+    } else {
+      storedModel = (await chrome.storage.local.get('modelName')).modelName || 'current';
+    }
     await checkLlmConnection(settings.apiUrl, settings.apiKey, storedModel);
   });
 
@@ -239,6 +256,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Model selection change
   modelSelect.addEventListener('change', async () => {
+    modelDirty = true;
     const val = modelSelect.value;
     await chrome.storage.local.set({ modelName: val });
 
@@ -246,7 +264,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (val === 'current') {
       const response = await chrome.storage.local.get('loadedModels');
       const loadedModels = response.loadedModels || [];
-      modelNameDisplay.textContent = loadedModels.length > 0 ? loadedModels[0].id : 'current';
+      modelNameDisplay.textContent = loadedModels.length > 0 ? (modelId(loadedModels[0]) || 'current') : 'current';
     } else {
       modelNameDisplay.textContent = val;
     }
@@ -296,6 +314,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   translatePageBtn.addEventListener('click', async () => {
     if (!activeTab) return;
 
+    frameProgress.clear();
     translatePageBtn.disabled = true;
     translatePageBtn.textContent = 'Translating...';
     progressCard.classList.remove('hidden');
@@ -355,11 +374,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Listen for translation progress updates from the content script
+  // Listen for translation progress updates from the content script.
+  // With all_frames injection every frame reports its own totals; aggregate
+  // per-frame instead of letting whichever message arrives last win.
   chrome.runtime.onMessage.addListener((message, sender) => {
     if (message.type === 'TRANSLATION_PROGRESS' && activeTab && sender.tab && sender.tab.id === activeTab.id) {
+      const frameId = sender.frameId ?? 0;
+      frameProgress.set(frameId, message.payload);
+      let translated = 0;
+      let total = 0;
+      for (const p of frameProgress.values()) {
+        translated += p.translated || 0;
+        total += p.total || 0;
+      }
       progressCard.classList.remove('hidden');
-      updateProgressUI(message.payload.translated, message.payload.total);
+      updateProgressUI(translated, total);
     }
   });
 });
