@@ -675,31 +675,86 @@ async function initSelectionTranslate() {
   const settings = await chrome.storage.local.get('selectionTranslateEnabled');
   selectionTranslateEnabled = settings.selectionTranslateEnabled !== false;
 
-  // Track mouse position at all times (capture phase to see all events)
-  const trackMouse = (e) => {
-    if (e.buttons !== undefined && e.buttons > 1) return; // Ignore right-click drags
-    _lmtLastMouseX = e.clientX;
-    _lmtLastMouseY = e.clientY;
-  };
-  document.addEventListener('mousemove', trackMouse, true);
-  document.addEventListener('pointermove', trackMouse, true);
-
-  // Track mouse button state for polling
   let _mouseDown = false;
-  document.addEventListener('mousedown', (e) => {
-    if (e.button !== undefined && e.button !== 0) return; // Ignore right-click / middle-click
-    _mouseDown = true;
-    _lmtHideTriggerAndBubbleIfOutside(e);
-  }, true);
-  document.addEventListener('pointerdown', (e) => {
-    if (e.button !== undefined && e.button !== 0) return; // Ignore right-click / middle-click
-    _mouseDown = true;
-    _lmtHideTriggerAndBubbleIfOutside(e);
-  }, true);
-  document.addEventListener('mouseup', (e) => { if (e.button === 0) _mouseDown = false; }, true);
-  document.addEventListener('pointerup', (e) => { if (e.button === 0) _mouseDown = false; }, true);
-  window.addEventListener('mouseup', (e) => { if (e.button === 0) _mouseDown = false; }, true);
-  window.addEventListener('pointerup', (e) => { if (e.button === 0) _mouseDown = false; }, true);
+  let _selTimer = null;
+
+  // All pointer handling flows through window.__lmtOnEvent, fed by
+  // content/events.js (document_start capture taps). Registering ordinary
+  // document/window listeners here is NOT enough: hostile SPAs (X.com,
+  // GitHub) register their own capture-phase stopImmediatePropagation()
+  // handlers before we load, which silences every later listener AND
+  // prevents events from ever reaching element-level handlers such as
+  // trigger.onclick — that made the translate icon unclickable there.
+  // The document_start tap registers before any page script, so it always
+  // observes raw events; in return we never block the page's own handlers.
+  const hitOurUI = (e) => {
+    const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+    for (const node of path) {
+      if (node && node._lmtActivate) return true;
+    }
+    const t = document.getElementById('lmt-trigger');
+    const b = document.getElementById('lmt-bubble');
+    if (t && (path.includes(t) || t.contains(e.target))) return true;
+    if (b && (path.includes(b) || b.contains(e.target))) return true;
+    return false;
+  };
+
+  window.__lmtOnEvent = (type, e) => {
+    try {
+      if (type === 'mousemove' || type === 'pointermove') {
+        if (e.buttons !== undefined && e.buttons > 1) return; // Ignore right-click drags
+        _lmtLastMouseX = e.clientX;
+        _lmtLastMouseY = e.clientY;
+        return;
+      }
+
+      // events.js taps BOTH window and document → every event arrives twice.
+      if (e.__lmtSeen) return;
+      e.__lmtSeen = true;
+
+      const isDown = type === 'mousedown' || type === 'pointerdown';
+      const isUp = type === 'mouseup' || type === 'pointerup';
+      const isClick = type === 'click';
+
+      if (isDown) {
+        if (e.button !== undefined && e.button !== 0) return; // Ignore right/middle-click
+        _mouseDown = true;
+        if (hitOurUI(e)) {
+          // Pressing our UI must not collapse the active selection or steal focus.
+          if (e.cancelable) e.preventDefault();
+        } else {
+          _lmtHideTriggerAndBubbleIfOutside(e);
+        }
+        return;
+      }
+
+      if (isClick) {
+        if (!selectionTranslateEnabled) return;
+        // Route activation through the tap: plain onclick handlers are
+        // unreachable when pages kill propagation in the capture phase.
+        const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+        for (const node of path) {
+          if (node && typeof node._lmtActivate === 'function') {
+            if (e.cancelable) e.preventDefault();
+            node._lmtActivate(e);
+            break;
+          }
+        }
+        return;
+      }
+
+      if (isUp) {
+        if (e.button === 0) _mouseDown = false;
+        if (!selectionTranslateEnabled) return;
+        if (e.button !== undefined && e.button !== 0) return; // Preserve context-menu Copy
+        if (hitOurUI(e)) return; // Clicking our own UI must not re-process the selection
+        _lmtLastMouseX = e.clientX;
+        _lmtLastMouseY = e.clientY;
+        clearTimeout(_selTimer);
+        _selTimer = setTimeout(() => _lmtProcessSelection(), 40);
+      }
+    } catch (err) { /* Never break the host page */ }
+  };
 
   // Hide trigger button on right-click contextmenu to prevent it from hijacking native contextmenu targets (e.g. Copy)
   document.addEventListener('contextmenu', (e) => {
@@ -708,26 +763,6 @@ async function initSelectionTranslate() {
       trigger.style.display = 'none';
     }
   }, true);
-
-  // Event-based detection (works on most sites)
-  let _selTimer = null;
-  const onUp = (e) => {
-    if (!selectionTranslateEnabled) return;
-    if (e.button !== undefined && e.button !== 0) return; // Crucial: ignore right-click (button 2) to preserve context menu Copy
-    _lmtLastMouseX = e.clientX;
-    _lmtLastMouseY = e.clientY;
-    _mouseDown = false;
-    // Don't re-trigger selection if the user clicked on our own UI
-    const t = document.getElementById('lmt-trigger');
-    const b = document.getElementById('lmt-bubble');
-    if ((t && t.contains(e.target)) || (b && b.contains(e.target))) return;
-    clearTimeout(_selTimer);
-    _selTimer = setTimeout(() => _lmtProcessSelection(), 40);
-  };
-  document.addEventListener('mouseup', onUp, true);
-  window.addEventListener('mouseup', onUp, true);
-  document.addEventListener('pointerup', onUp, true);
-  window.addEventListener('pointerup', onUp, true);
 
   // Keyboard selections
   document.addEventListener('keyup', (e) => {
@@ -831,10 +866,12 @@ function _lmtShowTrigger(text, posX, posY) {
   // Store text for dedup check
   trigger._lmtText = text;
 
-  trigger.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
-  trigger.onclick = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
+  // Activation is dispatched via the __lmtOnEvent tap (see initSelectionTranslate).
+  // A plain onclick would never fire on hostile pages whose capture-phase
+  // handlers stopImmediatePropagation() before the event reaches this button.
+  // The mousedown preventDefault (avoid collapsing the selection when pressing
+  // the icon) is likewise handled centrally in the tap.
+  trigger._lmtActivate = () => {
     trigger.style.display = 'none';
     _lmtShowBubble(text, posX, posY);
   };
@@ -943,9 +980,8 @@ function _lmtShowBubble(text, posX, posY) {
     document.documentElement.appendChild(style);
   }
 
-  // Set up close button
-  bubble.querySelector('#lmt-bubble-close-btn').onclick = (e) => {
-    e.preventDefault(); e.stopPropagation();
+  // Set up close button (activation routed through the event tap — see initSelectionTranslate)
+  bubble.querySelector('#lmt-bubble-close-btn')._lmtActivate = () => {
     bubble.style.display = 'none';
   };
 
@@ -984,7 +1020,7 @@ function _lmtShowBubble(text, posX, posY) {
 
         const copyBtn = bubble.querySelector('#lmt-copy-btn');
         if (copyBtn) {
-          copyBtn.onclick = async (e) => {
+          copyBtn._lmtActivate = async () => {
             e.preventDefault(); e.stopPropagation();
             try {
               await navigator.clipboard.writeText(transText);
