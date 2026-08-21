@@ -1,6 +1,6 @@
 # HANDOFF — 划词翻译修复 + 全量 Review 整改
 
-> 更新:2026-08-22 · 分支 `main` · Commit 3(content.js 批量)已完成并提交
+> 更新:2026-08-22 · 分支 `main` · **已与 origin/main 同步(全部整改完成并推送)**
 > 工作区:`scratch/` 未跟踪(来源不明,处理前先看内容,可删)
 
 ---
@@ -56,7 +56,7 @@ node test-widget.js hostile.html  # 同上,敌意页
 | Commit 4(本次) | C5:popup 设置抽屉"忽略的网站"管理列表(渲染/逐个删除/空态,test-popup.js 验证);E1/E2:README 补 events.js 结构与划词/忽略域名恢复文档,CHROMEWEBSTORE.md 权限表补 tabs/DNR 与存储键说明。 |
 
 ### 待办
-- 全部 A-E 项已完成。剩余动作:跑四组 E2E 后 `git push origin main`(用户此前明确要求推送过一次,推送前再确认一次为宜)。
+- 无。A-E 全部完成,四组 E2E 全绿,已推送 origin/main(2026-08-22)。
 
 ## 6. 地雷区
 
