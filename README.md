@@ -18,6 +18,8 @@ A sleek, lightweight Chrome Extension that translates web pages in-place (dual-l
     *   **Ollama 免配置跨域越过**：动态修改 HTTP 请求头以剥离跨域 Origin 限制，让你可以直接连通本地 Ollama 服务，无需修改 Ollama 的环境变量或启动参数。
 *   **Premium Glassmorphic UI**: Sleek, modern dark-theme popup card with real-time translation progress indicators.
     *   **毛玻璃暗黑 UI**：高颜值的现代化控制面板，支持实时展现网页翻译进度。
+*   **Selection Translate (划词翻译)**: Select any text on a page and a small icon appears next to your cursor. Click it to get an instant translation in a floating bubble (draggable, with copy button).
+    *   **划词翻译**：选中网页任意文字后，鼠标旁会出现翻译小图标，点击即在可拖拽的悬浮气泡中显示译文（支持一键复制）。
 *   **Floating Translate Widget**: A right-aligned floating button that sticks to the page side (Immersive Translate style) with:
     *   **右侧吸附悬浮窗**：在页面右侧提供像沉浸式翻译一样的悬浮球：
         *   **Vertical Drag-and-Drop**: Easily move the widget vertically. Click suppression prevents accidental triggers on drag.
@@ -26,6 +28,12 @@ A sleek, lightweight Chrome Extension that translates web pages in-place (dual-l
             *   **一键切换双语**：一键开启翻译，或在翻译完成后快速在“双语/原文”状态切换。
         *   **Domain Blacklisting**: Close button allows blocking the widget per-domain.
             *   **域名级屏蔽**：点击右上角关闭按钮可对当前站点永久隐藏悬浮球。
+
+### Re-enabling a hidden widget | 恢复被隐藏的悬浮球
+
+Clicking the widget's × hides it permanently for the current domain. To bring it back: open the extension popup → ⚙️ Advanced Settings → **Ignored Sites**, then click × next to the domain to remove it from the list.
+
+点击悬浮球右上角的 × 会在当前域名下永久隐藏悬浮球。恢复方法：打开插件弹窗 → ⚙️ 高级设置 → **Ignored Sites（忽略的网站）**，点击对应域名旁的 × 即可将其移出忽略列表。
 
 ---
 
@@ -77,7 +85,8 @@ A sleek, lightweight Chrome Extension that translates web pages in-place (dual-l
 ├── README.md             # Project documentation
 ├── icons/                # Extension logo icons (插件各尺寸 Logo)
 └── content/
-    ├── content.js        # DOM traversal, lazy load logic, floating widget events (视口翻译与悬浮球逻辑)
+    ├── events.js         # document_start event tap feeding all pointer handling (事件特权通道，先于页面脚本捕获指针事件)
+    ├── content.js        # DOM traversal, lazy load logic, floating widget & selection translate (视口翻译、悬浮球与划词翻译逻辑)
     └── content.css       # Custom translation styles & floating widget visual aesthetics (翻译排版与悬浮球样式)
 ```
 

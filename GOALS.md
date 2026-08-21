@@ -21,7 +21,7 @@ Legend: [ ] todo · [x] done · [~] deferred with rationale
 - [x] C2. Stop auto-persisting resolved model name — it clobbers the `'current'` sentinel semantics (c51594e)
 - [x] C3. Progress interleaving across frames (all_frames): aggregate per-frame totals instead of last-write-wins (c51594e)
 - [x] C4. GET_PAGE_STATUS multi-frame race: scope status query to main frame (c51594e)
-- [ ] C5. Ignored-domains manager UI in settings drawer (close-× is currently irreversible)
+- [x] C5. Ignored-domains manager UI in settings drawer (close-× is currently irreversible)
 
 ## D. Content script hygiene
 - [x] D1. Remove dead `_mouseDown` state (write-only since poll-guard removal)
@@ -30,8 +30,8 @@ Legend: [ ] todo · [x] done · [~] deferred with rationale
 - [x] D4. Oversize selection (>2000 chars) currently silent — show an explanatory hint bubble
 
 ## E. Docs
-- [ ] E1. README: file structure += events.js; document 划词翻译 + ignored-domains + how to re-enable a domain
-- [ ] E2. CHROMEWEBSTORE.md: permissions table += tabs / declarativeNetRequest; storage keys += ignoredDomains / loadedModels
+- [x] E1. README: file structure += events.js; document 划词翻译 + ignored-domains + how to re-enable a domain
+- [x] E2. CHROMEWEBSTORE.md: permissions table += tabs / declarativeNetRequest; storage keys += ignoredDomains / loadedModels
 
 ## Deferred (documented, not fixed now)
 - [~] N1. all_frames translates ad/tracking iframes too — needed for Claude.ai-artifact-style frames; filtering heuristics are fragile. Documented as limitation.

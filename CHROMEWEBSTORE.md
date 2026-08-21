@@ -58,9 +58,11 @@ English
 
 | Permission | Type | Justification |
 |------------|------|---------------|
-| `storage` | permissions | Required to save and persist the user's translation settings (API URL, model choice, target language, display mode, concurrency, and batch sizes) across browser sessions. |
+| `storage` | permissions | Required to save and persist the user's translation settings (API URL, model choice, target language, display mode, concurrency, and batch sizes), the list of sites where the user dismissed the floating widget (`ignoredDomains`, manageable and removable from the popup's settings drawer), and the last-fetched model list (`loadedModels`) across browser sessions. |
 | `activeTab` | permissions | Grants temporary security clearance to inject the translation scripting actions only when the user explicitly triggers translation on the current page. |
 | `scripting` | permissions | Required to programmatically execute the translation DOM content scripts and inject self-adaptive styles inside the webpage context. |
+| `tabs` | permissions | Required to query the active tab's URL/status when the popup opens, route translation progress messages per tab, and deliver toggle commands to the correct tab. No browsing history is read or stored. |
+| `declarativeNetRequest` | permissions | Required to apply dynamic HTTP header rules that strip the `Origin` header on requests to local LLM servers (e.g. Ollama), so users don't need to relaunch their local server with special CORS flags. Rules target localhost endpoints only. |
 | `http://localhost/*`<br>`http://127.0.0.1/*` | host_permissions | Required to connect to and fetch translations from local LLM servers (like LM Studio or Ollama) running on the user's machine, bypassing CORS restrictions. |
 | `https://*/*`<br>`http://*/*` | host_permissions | Required to translate webpages on any website the user visits, and to optionally support remote custom OpenAI-compatible cloud endpoints. |
 

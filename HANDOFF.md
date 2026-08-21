@@ -53,11 +53,10 @@ node test-widget.js hostile.html  # 同上,敌意页
 | `29ac82b` | B1-B3:resolveModel 去重+60s 记忆、错误不再注入页面 |
 | `c51594e` | C1-C4:'current' 哨兵、字符串模型、GET_PAGE_STATUS 限主帧、进度按帧聚合 |
 | Commit 3(本次) | A4/A5/A6/D1-D4 + 附带项:拖拽控制器注册表、widget/气泡拖拽走 tap、contextmenu 走 tap、删 `_mouseDown`、空 catch 加日志、抽 `_lmtEventHitsUi`、超长选区提示气泡(`_lmtShowHint`)、气泡空结果显示"翻译结果为空,请重试"。GOALS.md 勾选同步。 |
+| Commit 4(本次) | C5:popup 设置抽屉"忽略的网站"管理列表(渲染/逐个删除/空态,test-popup.js 验证);E1/E2:README 补 events.js 结构与划词/忽略域名恢复文档,CHROMEWEBSTORE.md 权限表补 tabs/DNR 与存储键说明。 |
 
 ### 待办
-- **C5**:popup 设置抽屉加"忽略的网站"管理列表(读取/逐个删除 `ignoredDomains`)——补上"误点 × 永久失效无恢复入口"的洞。
-- **E1/E2**:README(文件结构补 events.js、划词翻译与忽略域名文档、恢复方法);CHROMEWEBSTORE.md(权限表补 tabs/DNR,存储键补 ignoredDomains/loadedModels)。
-- 全部完成后跑四组 E2E,然后 `git push origin main`(用户此前明确要求推送过一次,推送前再确认一次为宜)。
+- 全部 A-E 项已完成。剩余动作:跑四组 E2E 后 `git push origin main`(用户此前明确要求推送过一次,推送前再确认一次为宜)。
 
 ## 6. 地雷区
 

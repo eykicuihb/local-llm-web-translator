@@ -33,6 +33,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const progressCount = document.getElementById('progress-count');
   const progressBar = document.getElementById('progress-bar');
 
+  // UI Elements - Ignored Sites Manager
+  const ignoredSitesList = document.getElementById('ignored-sites-list');
+  const ignoredSitesEmpty = document.getElementById('ignored-sites-empty');
+
   // Current tab state
   let activeTab = null;
   // True once the user explicitly picks a model in the dropdown; until then
@@ -88,6 +92,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 4. Query current tab status
     await checkTabStatus();
+
+    renderIgnoredSites();
   }
 
   // Disable translation controls for unsupported pages
@@ -188,9 +194,40 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  // Render the ignored-domains manager list. Re-run on every drawer open so
+  // entries added via the widget's × on other tabs show up without reopening
+  // the popup.
+  async function renderIgnoredSites() {
+    const { ignoredDomains = [] } = await chrome.storage.local.get('ignoredDomains');
+    ignoredSitesList.innerHTML = '';
+    ignoredSitesEmpty.classList.toggle('hidden', ignoredDomains.length > 0);
+
+    ignoredDomains.forEach((domain) => {
+      const row = document.createElement('div');
+      row.className = 'ignored-site-row';
+
+      const name = document.createElement('span');
+      name.className = 'ignored-site-name';
+      name.textContent = domain;
+
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'ignored-site-remove';
+      removeBtn.title = `Show the floating widget again on ${domain}`;
+      removeBtn.textContent = '×';
+      removeBtn.addEventListener('click', async () => {
+        const { ignoredDomains = [] } = await chrome.storage.local.get('ignoredDomains');
+        await chrome.storage.local.set({ ignoredDomains: ignoredDomains.filter((d) => d !== domain) });
+        renderIgnoredSites();
+      });
+
+      row.appendChild(name);
+      row.appendChild(removeBtn);
+      ignoredSitesList.appendChild(row);
+    });
+  }
+
   // Update Progress Tracker UI
-  function updateProgressUI(translated, total) {
-    progressCount.textContent = `${translated}/${total}`;
+  function updateProgressUI(translated, total) {    progressCount.textContent = `${translated}/${total}`;
     const percent = total > 0 ? Math.min(100, Math.round((translated / total) * 100)) : 0;
     progressBar.style.width = `${percent}%`;
 
@@ -208,6 +245,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Settings drawer toggle
   settingsToggle.addEventListener('click', () => {
     settingsDrawer.classList.toggle('hidden');
+    if (!settingsDrawer.classList.contains('hidden')) {
+      renderIgnoredSites();
+    }
   });
 
   // Settings Save & Connect click

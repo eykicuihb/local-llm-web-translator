@@ -424,6 +424,52 @@ input:focus {
   flex: 1;
 }
 
+/* Ignored Sites Manager */
+.ignored-sites-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ignored-site-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background-color: rgba(15, 23, 42, 0.8);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.ignored-site-name {
+  font-size: 12px;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.ignored-site-remove {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.ignored-site-remove:hover {
+  color: #ef4444;
+  background-color: rgba(239, 68, 68, 0.12);
+}
+
+.ignored-empty {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 /* Footer */
 .footer {
   margin-top: auto;
